@@ -1,0 +1,15 @@
+## Interface: 16001
+## Title: Smaller UI
+## Notes: Set a UI scale below the built-in slider minimum. Type /sui for settings.
+## Author: Jake
+## Version: 1.4.0
+## OptionalDeps: Blizzard_Settings
+## SavedVariables: SmallerUIDB
+## SavedVariablesPerCharacter: SmallerUICharDB
+
+SmallerUI.lua
+Elements.lua
+Minimap.lua
+ReadyFlash.lua
+ReadyOptions.lua
+Options.lua
