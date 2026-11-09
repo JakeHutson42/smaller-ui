@@ -40,6 +40,7 @@ function Addon:Apply()
         globalModified = false
     end
     self:ApplyElements()
+    self:ApplyResources()
     self:UpdateMinimap()
     self:CreateOptions()
     self:RefreshOptions(false)
@@ -127,12 +128,20 @@ SLASH_SMALLERUI1, SLASH_SMALLERUI2 = "/sui", "/smallerui"
 SlashCmdList.SMALLERUI = HandleCommand
 for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD",
     "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED", "DISPLAY_SIZE_CHANGED",
-    "UI_SCALE_CHANGED", "UPDATE_CHAT_WINDOWS" }) do
+    "UI_SCALE_CHANGED", "UPDATE_CHAT_WINDOWS", "ADDON_ACTION_BLOCKED", "ADDON_ACTION_FORBIDDEN" }) do
     frame:RegisterEvent(event)
 end
 
-frame:SetScript("OnEvent", function(_, event, name)
-    if event == "ADDON_LOADED" and name == addonName and not Addon.db then
+frame:SetScript("OnEvent", function(_, event, name, action)
+    if event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
+        if name == addonName then
+            -- Record only our own action/stack. Do not suppress Blizzard's warning.
+            Addon.lastBlockedAction = { event = event, action = type(action) == "string" and action or "Unknown",
+                stack = debugstack and debugstack(2, 15, 0) or "", at = GetTime() }
+            if Addon.character then Addon.character.lastBlockedAction = Addon.lastBlockedAction end
+        end
+        return
+    elseif event == "ADDON_LOADED" and name == addonName and not Addon.db then
         local firstLoad = SmallerUIDB == nil
         if type(SmallerUIDB) ~= "table" then SmallerUIDB = {} end
         Addon.db = SmallerUIDB
@@ -145,6 +154,8 @@ frame:SetScript("OnEvent", function(_, event, name)
         Addon:ValidateElements()
         Addon:ValidateMinimap()
         Addon:ValidateReadyFlash()
+        Addon:ValidateResources()
+        if Addon.lastBlockedAction then Addon.character.lastBlockedAction = Addon.lastBlockedAction end
         if firstLoad then
             Addon:Print("Ready. Type /sui for settings; /sui reset restores the game's scale.")
         end
@@ -152,6 +163,7 @@ frame:SetScript("OnEvent", function(_, event, name)
         loggedIn = true
         Addon.baseRootLocalScale = UIParent:GetScale()
         Addon.baseRootScale = UIParent:GetEffectiveScale()
+        Addon:ApplyResources()
         Addon:UpdateMinimap()
         Addon:CreateOptions()
         Addon:RefreshReadyTracking()

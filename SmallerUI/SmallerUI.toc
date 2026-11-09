@@ -2,8 +2,8 @@
 ## Title: Smaller UI
 ## Notes: Set a UI scale below the built-in slider minimum. Type /sui for settings.
 ## Author: Jake
-## Version: 1.4.0
-## OptionalDeps: Blizzard_Settings
+## Version: 1.5.0
+## OptionalDeps: Blizzard_Settings, Blizzard_ColorPickerFrame
 ## SavedVariables: SmallerUIDB
 ## SavedVariablesPerCharacter: SmallerUICharDB
 
@@ -12,4 +12,11 @@ Elements.lua
 Minimap.lua
 ReadyFlash.lua
 ReadyOptions.lua
+Forecasts.lua
+Seal.lua
+ResourceStyle.lua
+MoveMode.lua
+Resources.lua
+ResourceStyleOptions.lua
+ResourceOptions.lua
 Options.lua

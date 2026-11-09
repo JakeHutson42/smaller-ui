@@ -2,6 +2,19 @@ local _, Addon = ...
 local pages, notices = {}, {}
 local UI = {}
 Addon.OptionsUI = UI
+local navigation = CreateFrame("Frame")
+
+function Addon:QueueScalingCategory()
+    local expected = SettingsPanel:GetCurrentCategory()
+    -- Let WoW finish the category click/layout before changing its selection.
+    navigation:SetScript("OnUpdate", function(self)
+        self:SetScript("OnUpdate", nil)
+        if not SettingsPanel:IsShown() or SettingsPanel:GetCurrentCategory() ~= expected then return end
+        if expected ~= Addon.settingsCategory and not Addon.settingsCategory:IsExpanded() then return end
+        if InCombatLockdown() then Addon.pendingOptionsPage = "scaling"; return end
+        SettingsPanel:SelectCategory(Addon.scaleSettingsCategory)
+    end)
+end
 
 function UI.Label(parent, text, x, y, font, width)
     local label = parent:CreateFontString(nil, "ARTWORK", font or "GameFontHighlight")
@@ -20,6 +33,46 @@ function UI.Tooltip(widget, text)
     widget:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
+function UI.NumberArrows(input, step, minimum, maximum, savedValue, apply)
+    local function Adjust(direction)
+        local value = tonumber(input:GetText())
+        if not value or value ~= value or math.abs(value) == math.huge then value = savedValue() end
+        value = math.max(minimum, math.min(maximum, math.floor((value + direction * step) * 100 + 0.5) / 100))
+        if value == savedValue() then input:SetText(string.format("%.2f", value)); return end
+        if apply(value) ~= false then input:SetText(string.format("%.2f", value)) end
+    end
+    local function Arrow(suffix, direction, y, texture)
+        local button = CreateFrame("Button", input:GetName() .. suffix, input)
+        button:SetSize(18, 12)
+        button:SetPoint("TOPLEFT", input:GetWidth() + 2, y)
+        button:SetNormalTexture("Interface\\Buttons\\UI-ScrollBar-Scroll" .. texture .. "Button-Up")
+        button:SetPushedTexture("Interface\\Buttons\\UI-ScrollBar-Scroll" .. texture .. "Button-Down")
+        button:SetHighlightTexture("Interface\\Buttons\\UI-ScrollBar-Scroll" .. texture .. "Button-Highlight")
+        button.stepper, button.stepDirection = true, direction
+        local function Stop(self) self:SetScript("OnUpdate", nil) end
+        button:SetScript("OnMouseDown", function(self, mouse)
+            if mouse ~= "LeftButton" then return end
+            self.mouseStepped = true
+            Adjust(direction)
+            local nextStep = GetTime() + 0.35
+            self:SetScript("OnUpdate", function(current)
+                if not IsMouseButtonDown("LeftButton") then Stop(current); return end
+                if GetTime() >= nextStep then Adjust(direction); nextStep = GetTime() + 0.07 end
+            end)
+        end)
+        button:SetScript("OnMouseUp", Stop)
+        button:SetScript("OnHide", function(self) Stop(self); self.mouseStepped = nil end)
+        button:SetScript("OnClick", function(self, mouse)
+            if mouse == "LeftButton" and not self.mouseStepped then Adjust(direction) end
+            self.mouseStepped = nil
+        end)
+        UI.Tooltip(button, "Click to adjust. Hold to keep adjusting.")
+        return button
+    end
+    input.up = Arrow("Up", 1, 0, "Up")
+    input.down = Arrow("Down", -1, -12, "Down")
+end
+
 function UI.Button(parent, name, text, x, y, width, callback)
     local button = CreateFrame("Button", name, parent, "UIPanelButtonTemplate")
     button:SetPoint("TOPLEFT", x, y)
@@ -27,6 +80,23 @@ function UI.Button(parent, name, text, x, y, width, callback)
     button:SetText(text)
     button:SetScript("OnClick", callback)
     return button
+end
+
+function UI.Select(parent, name, x, y, width, entries, get, set, initializeRow)
+    local dropdown = CreateFrame("DropdownButton", name, parent, "WowStyle1DropdownTemplate")
+    dropdown:SetPoint("TOPLEFT", x, y)
+    dropdown:SetWidth(width)
+    dropdown:SetHeight(26)
+    dropdown:SetupMenu(function(_, root)
+        local choices = type(entries) == "function" and entries() or entries
+        for _, entry in ipairs(choices) do
+            local row = root:CreateRadio(entry[2], function(value) return get() == value end, set, entry[1])
+            if initializeRow then
+                row:AddInitializer(function(button) return initializeRow(button, entry) end)
+            end
+        end
+    end)
+    return dropdown
 end
 
 function UI.Checkbox(parent, name, text, x, y, callback, tip)
@@ -133,6 +203,7 @@ function Addon:RefreshOptions(syncInput)
         if syncInput == true then row.input:SetText(string.format("%.2f", self.db.elements[key] or 1)) end
     end
     self:RefreshReadyOptions()
+    self:RefreshResourceOptions(syncInput == true)
 end
 
 function Addon:CreateOptions()
@@ -143,7 +214,7 @@ function Addon:CreateOptions()
     end
     if not Settings or not Settings.RegisterCanvasLayoutCategory then return false end
 
-    local page = UI.Page("SmallerUIOptions", "Smaller UI", "Adjust the interface and keep important elements easy to read.", 710)
+    local page = UI.Page("SmallerUIOptions", "UI scaling", "Adjust the interface and keep important elements easy to read.", 710)
     pages.scaling, self.options = page, page
     local content = page.content
     UI.Section(content, "UI scale", 0)
@@ -237,15 +308,32 @@ function Addon:CreateOptions()
     end)
     local ready = self:BuildReadyOptions()
     pages.cooldowns = ready
-    self.settingsCategory = Settings.RegisterCanvasLayoutCategory(page, "Smaller UI")
+    local resources, party, pet = self:BuildResourceOptions()
+    pages.resources, pages.party, pages.pet = resources, party, pet
+    local group = CreateFrame("Frame", "SmallerUIOptionsGroup")
+    group:Hide()
+    group:SetScript("OnShow", function() Addon:QueueScalingCategory() end)
+    self.settingsCategory = Settings.RegisterCanvasLayoutCategory(group, "Smaller UI")
+    self.settingsCategory:SetShouldSortAlphabetically(false)
+    self.scaleSettingsCategory = Settings.RegisterCanvasLayoutSubcategory(self.settingsCategory, page, "UI scaling")
+    self.resourceSettingsCategory = Settings.RegisterCanvasLayoutSubcategory(self.settingsCategory, resources, "Personal resources")
+    self.partySettingsCategory = Settings.RegisterCanvasLayoutSubcategory(self.settingsCategory, party, "Party display")
+    self.petSettingsCategory = Settings.RegisterCanvasLayoutSubcategory(self.settingsCategory, pet, "Pet display")
     self.readySettingsCategory = Settings.RegisterCanvasLayoutSubcategory(self.settingsCategory, ready, "Cooldown flashes")
     Settings.RegisterAddOnCategory(self.settingsCategory)
+    local expanded = self.settingsCategory:IsExpanded()
+    SettingsPanel:GetCategoryList():RegisterCallback(SettingsCategoryListMixin.Event.OnCategoriesUpdated, function()
+        local nowExpanded = Addon.settingsCategory:IsExpanded()
+        local opened = nowExpanded and not expanded
+        expanded = nowExpanded
+        if opened and not Addon.openingOptionsPage and SettingsPanel:IsShown() then Addon:QueueScalingCategory() end
+    end, self)
     self:RefreshOptions(true)
     return true
 end
 
 function Addon:ShowOptions(key)
-    key = key == "cooldowns" and "cooldowns" or "scaling"
+    if key ~= "cooldowns" and key ~= "resources" and key ~= "party" and key ~= "pet" then key = "scaling" end
     if InCombatLockdown() then
         self.pendingOptionsPage = key
         self:Print("Settings will open after combat.")
@@ -255,9 +343,13 @@ function Addon:ShowOptions(key)
         self:Print("WoW's addon settings are not available yet. Try /sui again after loading.")
         return false
     end
-    local category = key == "cooldowns" and self.readySettingsCategory or self.settingsCategory
+    local categories = { scaling = self.scaleSettingsCategory, cooldowns = self.readySettingsCategory,
+        resources = self.resourceSettingsCategory, party = self.partySettingsCategory, pet = self.petSettingsCategory }
+    local category = categories[key]
     self.currentOptionsPage = key
+    self.openingOptionsPage = true
     Settings.OpenToCategory(category:GetID())
+    self.openingOptionsPage = nil
     return true
 end
 
@@ -275,7 +367,7 @@ function Addon:HideOptions()
     if InCombatLockdown() then return false end
     if SettingsPanel and SettingsPanel:IsShown() then
         if SettingsPanel:HasUnappliedSettings() then
-            self:OptionsFeedback("Apply or discard your pending WoW settings, then choose a slot.", true, "cooldowns")
+            self:OptionsFeedback("Apply or discard your pending WoW settings, then try again.", true)
             return false
         end
         SettingsPanel:Close(true)
