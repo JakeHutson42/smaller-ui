@@ -50,10 +50,16 @@ function Addon:EndSealDrag()
         local x, y = icon:GetCenter()
         local left, bottom, width, height = view.health:GetRect()
         if Number(x) and Number(y) and Number(left) and Number(bottom) and Number(width) and Number(height) then
-            local ratio = icon:GetEffectiveScale() / view.health:GetEffectiveScale()
             local cfg = self:GetResourceSettings().seal
-            cfg.x = math.max(-32768, math.min(32768, x * ratio - icon:GetWidth() / 2 - left - width))
-            cfg.y = math.max(-32768, math.min(32768, y * ratio - bottom - height / 2 - VerticalOffset(view)))
+            if cfg.linked then
+                local ratio = icon:GetEffectiveScale() / view.health:GetEffectiveScale()
+                cfg.x = math.max(-32768, math.min(32768, x * ratio - icon:GetWidth() / 2 - left - width))
+                cfg.y = math.max(-32768, math.min(32768, y * ratio - bottom - height / 2 - VerticalOffset(view)))
+            else
+                local cx, cy = UIParent:GetCenter()
+                local scale, parentScale = icon:GetEffectiveScale(), UIParent:GetEffectiveScale()
+                cfg.x, cfg.y = x * scale - cx * parentScale, y * scale - cy * parentScale
+            end
         end
     end
     dragging = nil
@@ -65,16 +71,48 @@ function Addon:IsPaladin()
     return Public(class) and class == "PALADIN"
 end
 
+function Addon:SetSealLinked(linked)
+    local cfg = self:GetResourceSettings().seal
+    if cfg.linked == linked then return true end
+    local view = self:GetResourceDisplay() and self:GetResourceDisplay().player
+    local x, y, previousScale
+    if icon and icon:IsVisible() then
+        x, y = icon:GetCenter()
+        previousScale = icon:GetEffectiveScale()
+    end
+    cfg.linked = linked
+    if not Number(x) or not Number(y) then
+        cfg.x, cfg.y = linked and 8 or 150, linked and 0 or -150
+    elseif linked then
+        local left, bottom, width, height = view.health:GetRect()
+        local ratio = previousScale / view.health:GetEffectiveScale()
+        cfg.x = x * ratio - cfg.size / 2 - left - width
+        cfg.y = y * ratio - bottom - height / 2 - VerticalOffset(view)
+    else
+        local cx, cy = UIParent:GetCenter()
+        local rootScale = UIParent:GetEffectiveScale()
+        cfg.x, cfg.y = x * previousScale - cx * rootScale, y * previousScale - cy * rootScale
+    end
+    self:ApplyResources()
+    return true
+end
+
 function Addon:LayoutSealIndicator(view, editing)
     if not icon then return end
     local cfg = self:GetResourceSettings().seal
     if not editing then icon:StopMovingOrSizing(); dragging = nil end
     if not dragging then
+        icon:SetIgnoreParentScale(not cfg.linked)
         icon:ClearAllPoints()
-        icon:SetPoint("LEFT", view.health, "RIGHT", cfg.x, cfg.y + VerticalOffset(view))
+        if cfg.linked then
+            icon:SetPoint("LEFT", view.health, "RIGHT", cfg.x, cfg.y + VerticalOffset(view))
+        else
+            local scale = icon:GetEffectiveScale()
+            icon:SetPoint("CENTER", UIParent, "CENTER", cfg.x / scale, cfg.y / scale)
+        end
     end
     icon:SetSize(cfg.size, cfg.size)
-    icon:EnableMouse(editing and self:IsPaladin() and cfg.enabled)
+    icon:EnableMouse(editing and self:IsPaladin())
 end
 
 function Addon:CreateSealIndicator(view)
@@ -98,7 +136,7 @@ function Addon:CreateSealIndicator(view)
     end)
     icon:SetScript("OnDragStop", function() Addon:EndSealDrag() end)
     icon:SetScript("OnMouseDown", function(_, button)
-        if button == "LeftButton" then Addon:SelectResourceMoveTarget(icon, "Paladin seal") end
+        if button == "LeftButton" then Addon:SelectMoveElement("seal", "seal") end
     end)
     icon:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -153,7 +191,7 @@ function Addon:UpdateSealIndicator()
     if not icon then return end
     local cfg = self:GetResourceSettings()
     local editing = self:IsEditingResources()
-    icon:SetShown(self:IsPaladin() and cfg.seal.enabled and (cfg.enabled or editing))
+    icon:SetShown(self:IsPaladin() and (editing or cfg.seal.enabled and cfg.enabled))
     if not icon:IsShown() then return end
     local active, unknown = FindActiveSeal(cfg.seal.lastSpellID)
     local observed = active and active ~= knownSeal

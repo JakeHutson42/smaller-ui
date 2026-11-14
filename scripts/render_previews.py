@@ -47,8 +47,8 @@ def text(draw, xy, value, size=14, color=WHITE, title=False, width=None):
 
 
 def button(draw, x, y, width, height, label, enabled=True):
-    box(draw, (x, y, x + width, y + height), "#4a2625" if enabled else "#272422", "#8a6b48", 3)
-    box(draw, (x + 2, y + 2, x + width - 2, y + height - 2), "#632f2c" if enabled else "#302c29", None, 2)
+    box(draw, (x, y, x + width, y + height), "#1b2633" if enabled else "#171c21", "#7f6a49", 3)
+    box(draw, (x + 2, y + 2, x + width - 2, y + height - 2), "#23303e" if enabled else "#1d242c", None, 2)
     face = font(12)
     label_width = draw.textlength(str(label), font=face) / SCALE
     text(draw, (x + (width - label_width) / 2, y + 3), label, 12, WHITE if enabled else MUTED)
@@ -59,8 +59,11 @@ def point(obj):
     if not points or not len(points):
         return None
     first = points[1]
-    if first[1] == "TOPLEFT" and isinstance(first[2], (int, float)):
-        return float(first[2]), -float(first[3] or 0)
+    if first[1] == "TOPLEFT":
+        if first[2] is None:
+            return 0, 0
+        if isinstance(first[2], (int, float)):
+            return float(first[2]), -float(first[3] or 0)
     return None
 
 
@@ -140,13 +143,11 @@ def render(env, state, key, filename, content_offset=0, texture_menu=False):
         elif obj.kind == "EditBox":
             box(draw, (x, y, x + width, y + height), "#0b0a09", "#75654b", 3)
             text(draw, (x + 8, y + 3), obj.text, 13, MUTED if obj.enabled is False else WHITE)
-        elif obj.kind == "CheckButton":
-            box(draw, (x + 3, y + 3, x + 22, y + 22), "#0d0c0a", "#8a7551", 2)
-            if obj.checked:
-                draw.line([(int(v[0] * SCALE), int(v[1] * SCALE)) for v in
-                           ((x + 7, y + 12), (x + 11, y + 17), (x + 20, y + 7))], fill=GOLD, width=3 * SCALE)
-            if obj.Text and obj.Text.text:
-                text(draw, (x + 31, y + 4), obj.Text.text, 13, MUTED if obj.enabled is False else WHITE)
+        elif obj.kind == "Button" and obj.checked is not None:
+            accent = GOLD if obj.checked and obj.enabled is not False else MUTED
+            box(draw, (x + 2, y + 5, x + 38, y + 23), "#224738" if obj.checked else "#111820", accent, 3)
+            thumb = x + (22 if obj.checked else 6)
+            box(draw, (thumb, y + 8, thumb + 12, y + 20), accent, None, 2)
         elif obj.kind == "Button" and width and obj.stepper:
             box(draw, (x, y, x + width, y + height), "#27231c", "#75654b", 2)
             cx, cy = x + width / 2, y + height / 2
@@ -197,31 +198,21 @@ def render(env, state, key, filename, content_offset=0, texture_menu=False):
     box(ImageDraw.Draw(shadow), (18, 48, 982, 778 + extra_height), "#000000", None, 12)
     image.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(12)))
     outer = ImageDraw.Draw(image)
-    box(outer, (20, 44, 980, 770 + extra_height), "#25211d", "#a18c65", 9)
-    box(outer, (26, 50, 974, 764 + extra_height), "#181716", "#564b39", 6)
-    box(outer, (30, 54, 970, 96), "#302922", "#68583f", 4)
-    text(outer, (451, 62), "Settings", 20, GOLD, True)
-    button(outer, 938, 61, 25, 24, "X")
-    text(outer, (52, 112), "Game", 14, MUTED)
-    text(outer, (132, 112), "AddOns", 14, GOLD)
-    box(outer, (128, 137, 199, 139), GOLD)
-    box(outer, (42, 154, 248, 706 + extra_height), "#121110", "#514837", 3)
-    box(outer, (54, 170, 236, 198), "#0b0b0a", "#574c37", 3)
-    text(outer, (64, 176), "Search", 12, "#807b71")
-    for index, (category_key, label) in enumerate((("group", state.addon.displayName), ("scaling", "UI scaling"),
+    box(outer, (20, 44, 980, 770 + extra_height), "#101820", "#a18c65", 6)
+    box(outer, (21, 45, 979, 110), "#172231")
+    text(outer, (48, 63), state.addon.displayName, 22, GOLD, True)
+    button(outer, 928, 64, 27, 25, "X")
+    box(outer, (21, 111, 234, 730 + extra_height), "#131e28")
+    for index, (category_key, label) in enumerate((("scaling", "Interface"),
             ("resources", "Personal bars"), ("party", "Party bars"),
             ("pet", "Pet bars"), ("swing", "Swing timer"))):
-        y = 214 + index * 36
-        if key == category_key:
-            box(outer, (50, y, 240, y + 32), "#4b3d27", None, 2)
-        text(outer, (61 if index == 0 else 82, y + 7), "v  " + label if index == 0 else label,
-             14 if index == 0 else 12, GOLD if key == category_key or index == 0 else WHITE)
-    box(outer, (264, 150, 958, 710 + extra_height), "#171615", "#514837", 3)
-    image.alpha_composite(canvas, (274 * SCALE, 154 * SCALE))
-    box(outer, (937, 174, 942, 686 + extra_height), "#34302a", None, 2)
-    thumb_end = 588 if key == "scaling" else 686 + extra_height
-    box(outer, (936, 175, 943, thumb_end), "#9d8966", None, 2)
-    button(outer, 837, 725 + extra_height, 112, 25, "Close")
+        y = 130 + index * 42
+        box(outer, (37, y, 216, y + 34), "#332c21" if key == category_key else "#1b2633",
+            GOLD if key == category_key else "#514837", 3)
+        text(outer, (54, y + 7), label, 14, GOLD if key == category_key else WHITE)
+    button(outer, 45, 665 + extra_height, 163, 30, "Move Mode")
+    box(outer, (246, 122, 954, 702 + extra_height), "#171615", "#514837", 3)
+    image.alpha_composite(canvas, (258 * SCALE, 126 * SCALE))
     text(outer, (287, 783 + extra_height), "Illustrative UI preview - not an in-game screenshot", 11, MUTED)
     image.convert("RGB").save(OUT / filename, optimize=True)
     print((OUT / filename).relative_to(ROOT))
@@ -351,11 +342,15 @@ def render_hud(state, filename, moving=False):
         toolbar = named("SmallerUIResourceEditor")
         x, y, width, height = native_rect(toolbar)
         box(draw, (x, y, x + width, y + height), "#171b1f", "#8e7d59", 6)
-        text(draw, (x + 22, y + 12), "Move mode: drag to move. Hold Shift to ignore snapping.", 12, GOLD)
-        text(draw, (x + 22, y + 35), "Resize with corners. Done saves. Escape cancels all changes.", 11)
-        for name, offset in (("SmallerUIResourceDemo", 28), ("SmallerUIResourceCancel", 292), ("SmallerUIResourceDone", 414)):
+        text(draw, (x + 16, y + 12), "Move Mode", 16, GOLD)
+        text(draw, (x + 162, y + 16), "Drag to move  /  Shift to bypass snap", 11)
+        button(draw, x + 16, y + 42, 172, 26, named("SmallerUIMoveTarget").text)
+        button(draw, x + 200, y + 42, 32, 26, "-")
+        button(draw, x + 238, y + 42, 32, 26, "+")
+        text(draw, (x + 325, y + 47), "Group", 12)
+        for name, offset in (("SmallerUIResourceDemo", 16), ("SmallerUIResourceCancel", 312), ("SmallerUIResourceDone", 408)):
             control = named(name)
-            button(draw, x + offset, y + height - 36, float(control.width), 24, control.text)
+            button(draw, x + offset, y + 77, float(control.width), 26, control.text)
     text(draw, (360, 587), "Illustrative UI preview - not an in-game screenshot", 11, MUTED)
     image.convert("RGB").save(OUT / filename, optimize=True)
     print((OUT / filename).relative_to(ROOT))
@@ -375,15 +370,17 @@ state.addon.ShowOptions(state.addon, "scaling")
 render(env, state, "scaling", "ui-scale-preview.png")
 state.addon.ShowOptions(state.addon, "resources")
 render(env, state, "resources", "personal-resources-settings-preview.png")
-render(env, state, "resources", "health-previews-settings-preview.png", content_offset=904)
+render(env, state, "resources", "health-previews-settings-preview.png", content_offset=230)
 env.SmallerUIPersonalcombatOpacity.SetValue(env.SmallerUIPersonalcombatOpacity, 90)
 env.SmallerUIPersonaloutOfCombatOpacity.SetValue(env.SmallerUIPersonaloutOfCombatOpacity, 45)
-render(env, state, "resources", "combat-texture-settings-preview.png", content_offset=400, texture_menu=True)
+page = env.SmallerUIPersonalOptions
+page.SelectTab(page, "appearance")
+render(env, state, "resources", "combat-texture-settings-preview.png", texture_menu=True)
 env.SmallerUIPersonalcombatOpacity.SetValue(env.SmallerUIPersonalcombatOpacity, 100)
 env.SmallerUIPersonaloutOfCombatOpacity.SetValue(env.SmallerUIPersonaloutOfCombatOpacity, 100)
 state.Click(env.SmallerUIPersonalTextToggle)
 state.Click(env.SmallerUIPersonalResourceColoursToggle)
-render(env, state, "resources", "text-style-settings-preview.png", content_offset=794)
+render(env, state, "resources", "text-style-settings-preview.png", content_offset=360)
 state.Click(env.SmallerUIPersonalTextToggle)
 state.Click(env.SmallerUIPersonalResourceColoursToggle)
 state.addon.ShowOptions(state.addon, "party")

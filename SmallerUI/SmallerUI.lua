@@ -71,6 +71,7 @@ end
 
 function Addon:SetElementScale(key, scale)
     if not self:GetElement(key) or not self:IsValidElementScale(scale) then return false end
+    self:ClearElementScaleOverrides(key)
     self.db.elements[key] = scale
     resetPending = false
     self:Apply()
@@ -80,6 +81,7 @@ end
 
 function Addon:SetElementIndependent(key, enabled)
     if not self:GetElement(key) then return end
+    self:ClearElementScaleOverrides(key)
     self.db.elements[key] = enabled and 1 or nil
     resetPending = false
     self:Apply()
@@ -89,6 +91,7 @@ end
 function Addon:Reset()
     self.db.enabled = false
     self.db.elements = {}
+    for _, element in ipairs(self.elements) do self:ClearElementScaleOverrides(element.key) end
     resetPending = true
     if InCombatLockdown() then
         self:Print("Reset saved. The UI will reload after combat to restore the game's scale.")
@@ -107,6 +110,8 @@ local function HandleCommand(message)
     local number = tonumber(command)
     if command == "" then
         Addon:ShowOptions()
+    elseif command == "move" then
+        Addon:BeginResourceEdit()
     elseif number then
         Addon:SetScale(number)
     elseif command == "smaller" or command == "larger" then
@@ -121,7 +126,7 @@ local function HandleCommand(message)
         if resetPending then Addon:Print("Reset and UI reload are waiting for combat to end.") end
     else
         Addon:Print("/fqol - open settings. /fqol 0.50 - set scale (0.10 to 1.50).")
-        Addon:Print("/fqol smaller, /fqol larger, /fqol status, /fqol reset (restore and reload).")
+        Addon:Print("/fqol move, /fqol smaller, /fqol larger, /fqol status, /fqol reset.")
     end
 end
 

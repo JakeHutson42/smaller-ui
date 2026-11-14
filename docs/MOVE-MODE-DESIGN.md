@@ -1,32 +1,28 @@
-# Move mode
+# Move Mode
 
-Implemented in **1.5.0-local8** for local testing. Nothing published.
+Open **Move Mode** from the settings sidebar or with `/fqol move`. Select a target
+from the toolbar or click a custom display. Disabled custom displays get sample
+previews. The Paladin seal appears for Paladins.
 
-Use **Move mode** on the personal, party or pet settings page. A temporary named
-outline shows the selected display/bar. Drag bars or the Paladin seal icon;
-corner grips still resize bars. Existing linked/independent sizing remains.
+Drag to move. **- / +** scales the selected target. Horizontal bars also have
+corner grips for independent width and height adjustment. **Group** links health
+and power within their display or attaches the Paladin seal to personal health.
+Party members share one layout. The swing timer has its own layout.
 
-Nearby edges and centres snap within eight screen pixels. Gold guides show active
-alignment with other custom bars, screen edges and screen centre. **Hold Shift**
-to bypass snapping immediately. Raw pointer movement is kept independent of the
-snap offset, so releasing Shift cannot accumulate drift.
+The target list includes visible minimap, chat, action-bar, player-frame,
+target-frame and quest-tracker frames. When a family has multiple visible
+frames, **Group** applies a move or scale to the family together. Switch it off
+to adjust a frame separately. These frames show a movable outline during editing.
+**Reset** clears the selected frames' offsets and scale overrides.
 
-**Done** saves. **Cancel/Escape** restores the whole session, including positions
-and sizes. Entering combat also cancels and restores the saved layout. Guides and
-selection outlines disappear outside editing. A lost mouse-release callback is
-recovered from the button state. Logging out or reloading cancels unconfirmed
-changes instead of persisting an unfinished edit.
+Nearby edges and centres snap to other custom displays and the screen. Gold
+guides show the active alignment. Hold **Shift** to bypass snapping.
 
-`MoveMode.lua` handles canvas coordinates, device-pixel thresholds, raw cursor
-movement, bounds, guide rendering and selection. `Resources.lua` saves group or
-bar offsets; `Seal.lua` saves the seal's health-relative offset. Snap targets
-exclude elements that move with the selection, including coupled party clones
-and seals attached to moving personal health. Positions are stored independently;
-snapping never creates permanent parent/child links to another display.
+**Done & Settings** saves and reopens the same page and tab. **Cancel** or Escape
+discards the session and returns to settings. Entering combat discards pending
+edits and queues the return to settings. Logging out or reloading discards
+pending edits.
 
-Automated geometry checks cover release-time Shift, fractional scales, screen
-centre/bounds, party members, seal offsets, persistence, rollback and combat.
-Actual pointer feel and client rendering still need in-game testing.
-
-Future discussion: keyboard pixel nudges, persistent grouping, and moving default
-WoW elements with separate handling for layout ownership and combat protection.
+`MoveMode.lua` owns selection, snap geometry, and the toolbar. `Resources.lua`
+owns the custom-display editing session. `Elements.lua` stores per-frame Blizzard
+offsets and scale overrides and applies them out of combat.

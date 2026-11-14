@@ -1,5 +1,6 @@
 local _, Addon = ...
 local overlay, selection, drag, selected, selectedName
+local toolbar, activeScope, activeKind
 local WHITE = "Interface\\Buttons\\WHITE8X8"
 local function Number(value)
     return (not issecretvalue or not issecretvalue(value)) and type(value) == "number"
@@ -76,12 +77,17 @@ local function DrawSelection()
     selection:Show()
 end
 
-function Addon:SelectResourceMoveTarget(target, name)
+function Addon:SelectResourceMoveTarget(target, name, scope, kind)
     if not self:IsEditingResources() or InCombatLockdown() or not target then return false end
     if drag and drag.target ~= target then return false end
     EnsureOverlay()
+    if scope and scope ~= "element" then self:HideElementMoveTarget() end
     selected, selectedName = target, name
     overlay:Show()
+    if scope then
+        activeScope, activeKind = scope, kind
+        if toolbar then toolbar:RefreshSelection() end
+    end
     DrawSelection()
     return true
 end
@@ -91,7 +97,7 @@ function Addon:StartResourceMove(target, anchor, scope, name, kind, linked)
     local bounds, anchorBounds = Rect(target), Rect(anchor)
     local x, y = GetCursorPosition()
     if not bounds or not anchorBounds or not Number(x) or not Number(y) then return false end
-    self:SelectResourceMoveTarget(target, name)
+    if name then self:SelectResourceMoveTarget(target, name, scope, kind) end
     target:StopMovingOrSizing()
     target:SetClampedToScreen(false) -- The raw cursor and our screen clamp stay independent of snapping.
     drag = { target = target, anchor = anchor, scope = scope, kind = kind, linked = linked,
@@ -107,7 +113,8 @@ local function Candidates()
         if drag.scope == "party" and scope == "party" and (drag.linked or kind == drag.kind or not kind) then return end
         if not kind and scope == drag.scope then return end
         -- The seal follows personal health, even when that health bar is unlinked.
-        if kind == "seal" and drag.scope == "player" and (drag.linked or drag.kind == "health") then return end
+        if kind == "seal" and Addon:GetResourceSettings().seal.linked and drag.scope == "player"
+            and (drag.linked or drag.kind == "health") then return end
         local bounds = Rect(frame)
         if bounds then result[#result + 1] = bounds end
     end
@@ -175,6 +182,7 @@ function Addon:UpdateResourceMoveMode()
         elseif drag.sawHeld then
             if drag.scope == "seal" then self:EndSealDrag()
             elseif drag.scope == "swing" then self:EndSwingTimerDrag()
+            elseif drag.scope == "element" then self:EndElementDrag()
             else self:EndResourceDrag() end
             return
         end
@@ -219,7 +227,99 @@ end
 function Addon:CloseResourceMoveMode()
     if drag then drag.target:SetClampedToScreen(true) end
     drag, selected, selectedName = nil, nil, nil
+    activeScope, activeKind = nil, nil
     if overlay then HideGuides(); selection:Hide(); overlay:Hide() end
 end
 
 function Addon:GetResourceMoveState() return drag end
+
+local targets = {
+    { "player:health", "Personal health", "player", "health" },
+    { "player:power", "Personal power", "player", "power" },
+    { "party:health", "Party health", "party", "health" },
+    { "party:power", "Party power", "party", "power" },
+    { "pet:health", "Pet health", "pet", "health" },
+    { "pet:power", "Pet power", "pet", "power" },
+    { "swing:swing", "Swing timer", "swing", "swing" },
+}
+local sealTarget = { "seal:seal", "Paladin seal", "seal", "seal" }
+
+function Addon:CreateResourceMoveToolbar()
+    if toolbar then return toolbar end
+    local UI = self.OptionsUI
+    toolbar = CreateFrame("Frame", "SmallerUIResourceEditor", UIParent, "BackdropTemplate")
+    toolbar:Hide()
+    toolbar:SetIgnoreParentScale(true)
+    toolbar:SetFrameStrata("DIALOG")
+    toolbar:SetFrameLevel(110)
+    toolbar:SetSize(570, 115)
+    toolbar:SetPoint("TOP", 0, -40)
+    toolbar:SetMovable(true)
+    toolbar:SetClampedToScreen(true)
+    toolbar:EnableMouse(true)
+    toolbar:RegisterForDrag("LeftButton")
+    toolbar:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    toolbar:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+    UI.Backdrop(toolbar, { 0.048, 0.065, 0.085, 0.99 }, { 0.83, 0.66, 0.35, 1 })
+    UI.Label(toolbar, "Move Mode", 16, -12, "GameFontNormalLarge")
+    UI.Label(toolbar, "Drag to move  /  Shift to bypass snap", 162, -16, "GameFontHighlightSmall")
+    local choices, byKey = {}, {}
+    for _, entry in ipairs(targets) do choices[#choices + 1] = entry; byKey[entry[1]] = entry end
+    if self:IsPaladin() then choices[#choices + 1] = sealTarget; byKey[sealTarget[1]] = sealTarget end
+    local function Choices()
+        local available = { unpack(choices) }
+        for _, entry in ipairs(Addon:GetElementMoveChoices()) do
+            available[#available + 1] = entry
+            byKey[entry[1]] = entry
+        end
+        return available
+    end
+    local select = UI.Select(toolbar, "SmallerUIMoveTarget", 16, -42, 172, Choices, function()
+        return activeScope and activeScope .. ":" .. activeKind
+    end, function(key)
+        local entry = byKey[key]
+        Addon:SelectMoveElement(entry[3], entry[4])
+    end)
+    local function Adjust(factor)
+        if not activeScope or drag or InCombatLockdown() then return end
+        local _, resize = Addon:GetMoveElementControls(activeScope, activeKind)
+        resize(factor)
+        DrawSelection()
+    end
+    local smaller = UI.Button(toolbar, nil, "-", 200, -42, 32, function() Adjust(1 / 1.1) end)
+    UI.Tooltip(smaller, "Scale down")
+    local larger = UI.Button(toolbar, nil, "+", 238, -42, 32, function() Adjust(1.1) end)
+    UI.Tooltip(larger, "Scale up")
+    local link = UI.Switch(toolbar, nil, "Group", 286, -42, function(enabled)
+        if not activeScope or drag then toolbar:RefreshSelection(); return end
+        local _, _, setLinked = Addon:GetMoveElementControls(activeScope, activeKind)
+        if setLinked then setLinked(enabled) end
+        Addon:SelectMoveElement(activeScope, activeKind)
+    end, "Move and scale the bars together. For the seal, group it with personal health.")
+    link:SetWidth(100)
+    local reset = UI.Button(toolbar, nil, "Reset", 458, -42, 96, function()
+        if activeScope ~= "element" or drag then return end
+        Addon:ResetElementMoveTarget()
+        DrawSelection()
+    end)
+    UI.Tooltip(reset, "Restore the selected Blizzard frame's position and family scale.")
+    function toolbar:RefreshSelection()
+        reset:SetShown(activeScope == "element")
+        select:GenerateMenu()
+        local linked = Addon:GetMoveElementControls(activeScope, activeKind)
+        link:SetShown(linked ~= nil)
+        link:SetChecked(linked)
+    end
+    UI.Button(toolbar, "SmallerUIResourceDemo", "Preview damage / heal", 16, -77, 172,
+        function() Addon:TestResourceDamage() end)
+    UI.Button(toolbar, "SmallerUIResourceCancel", "Cancel", 312, -77, 84,
+        function() Addon:FinishResourceEdit(false) end)
+    UI.Button(toolbar, "SmallerUIResourceDone", "Done & Settings", 408, -77, 146,
+        function() Addon:FinishResourceEdit(true) end)
+    toolbar:SetScript("OnHide", function(self)
+        self:StopMovingOrSizing()
+        if Addon:IsEditingResources() then Addon:FinishResourceEdit(false) end
+    end)
+    table.insert(UISpecialFrames, toolbar:GetName())
+    return toolbar
+end

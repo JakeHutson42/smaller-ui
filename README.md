@@ -16,9 +16,13 @@ Enable **Swing timer** and choose a weapon lane, style, and theme. The timer sta
 
 ## Settings
 
-In **Personal bars → Position and size**, choose **Curved HUD** for health on the left and your active resource on the right. Move both arcs together in **Move mode** and adjust their height, width, scale, and separation in Settings. **Horizontal bars** restores your stacked layout.
+Open **Forever QoL** with `/fqol` or the minimap gear. Use **Interface** for global and individual UI scaling. The **Personal bars**, **Party bars**, and **Pet bars** pages each have three tabs.
 
-In **Personal bars**, **Party bars**, or **Pet bars**, open **Appearance** to preview class themes and mix their textures, trim, and colours. Choose **Fluid** motion for softer trails or **Vivid** for stronger feedback on damage, healing, and power spent. Health, power, and their numbers update immediately.
+- **Display** controls health and power independently, with combat visibility and opacity.
+- **Layout** controls sizes, spacing, and grouping. Personal bars can use horizontal bars or a curved HUD.
+- **Appearance** controls themes, textures, colours, text, and motion.
+
+Open **Move Mode** from the sidebar or run `/fqol move`. Select an element or click a preview, drag to position it, and use **- / +** to resize. **Group** links related bars or Blizzard frames. Hold **Shift** to bypass snapping. **Done & Settings** saves and returns to your settings tab. **Cancel** or **Escape** restores the previous layout.
 
 *Illustrative UI previews, not in-game screenshots.*
 

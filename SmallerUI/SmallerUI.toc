@@ -3,7 +3,7 @@
 ## Notes: UI scaling, resource bars, and a swing timer. Type /fqol for settings.
 ## Author: Jake
 ## Version: 1.7.0
-## OptionalDeps: Blizzard_Settings, Blizzard_ColorPickerFrame
+## OptionalDeps: Blizzard_ColorPickerFrame
 ## SavedVariables: SmallerUIDB
 ## SavedVariablesPerCharacter: SmallerUICharDB
 

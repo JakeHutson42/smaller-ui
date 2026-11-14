@@ -17,17 +17,17 @@ function Addon:RefreshSwingOptions()
     for _, dropdown in ipairs(page.dropdowns) do dropdown:GenerateMenu() end
     self:StyleSwingDisplay(page.preview, settings)
     page.preview.bar:SetValue(0.56)
-    self:SetPageStatus("swing", supported and "Shows your selected weapon lane while a swing is in progress."
+    self:SetPageStatus("swing", supported and ""
         or "The native swing event is unavailable on this client.")
 end
 
 function Addon:BuildSwingOptions()
     local UI = self.OptionsUI
-    page = UI.Page("SmallerUISwingOptions", "Swing timer", "A compact timer for your next auto attack.", 394)
+    page = UI.Page("SmallerUISwingOptions", "Swing timer", 324)
     local content = page.content
     local prefix = "SmallerUISwing"
     page.inputs, page.dropdowns = {}, {}
-    page.enabled = UI.Checkbox(content, prefix .. "Enabled", "Show swing timer", 4, 0,
+    page.enabled = UI.Switch(content, prefix .. "Enabled", "Show swing timer", 4, 0,
         function(value) Addon:SetSwingTimerOption("enabled", value) end)
     page.move = UI.Button(content, prefix .. "Move", "Move timer", 328, 0, 148, function() Addon:BeginResourceEdit() end)
     UI.Section(content, "Style and weapon", -46)
@@ -86,8 +86,6 @@ function Addon:BuildSwingOptions()
     UI.Section(content, "Preview", -222)
     page.preview = self:CreateSwingDisplay(content, prefix .. "Preview")
     page.preview:SetPoint("TOPLEFT", 18, -270)
-    UI.Label(content, "Move timer opens Move Mode. Drag the timer, then click Done to save.", 12, -320, "GameFontDisableSmall", 580)
-    UI.Label(content, "If both timers are visible, switch off WoW's Swing Timer in its settings.", 12, -345, "GameFontDisableSmall", 580)
     page:SetScript("OnShow", function()
         Addon.currentOptionsPage = "swing"
         Addon:OptionsFeedback("", false, "swing")

@@ -37,8 +37,8 @@ Combat cancels move mode and restores the layout. Test notes are in
 Exact health/power widths, heights, scale and spacing are on the settings page.
 Each dimension field has up/down arrows: click for one step, hold to repeat.
 Arrows save that field immediately; typed values still use **Apply sizes**.
-The **Smaller UI** group expands to select **UI scaling**, its first entry.
-Personal bars, Party bars and Pet bars follow it.
+The **Forever QoL** window has **Interface**, **Personal bars**, **Party bars**,
+**Pet bars**, and **Swing timer** pages.
 **Test damage / heal** in edit mode previews the feedback without affecting your character.
 Real health events immediately interrupt that demonstration and restore live values.
 

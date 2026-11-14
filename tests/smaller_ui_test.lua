@@ -117,6 +117,10 @@ local function boot(saved, characterSaved, compatibility)
         function widget:GetFrameLevel() return 1 end
         function widget:GetName() return name end
         function widget:SetSize(width, height) self.width, self.height = width, height end
+        function widget:GetSize() return self:GetWidth(), self:GetHeight() end
+        function widget:SetFontString(label) self.label = label end
+        function widget:GetHighlightTexture() return Widget(nil, self) end
+        function widget:SetVerticalScroll(value) self.scrollPosition = value end
         function widget:SetWidth(width) self.width = width end
         function widget:SetHeight(height) self.height = height end
         function widget:GetWidth()
@@ -139,7 +143,8 @@ local function boot(saved, characterSaved, compatibility)
         function widget:SetEnabled(value) self.enabled = value end
         function widget:SetAlpha(value) self.alpha = value end
         function widget:GetAlpha() return self.alpha or 1 end
-        function widget:SetStatusBarColor(...) self.barColor = { ... } end
+        function widget:SetStatusBarColor(r, g, b, alpha) self.barColor = { r, g, b, alpha or 1 } end
+        function widget:GetStatusBarColor() return unpack(self.barColor or { 1, 1, 1, 1 }) end
         function widget:SetFormattedText(format, ...)
             self.format, self.formatArgs = format, { ... }
             for _, value in ipairs(self.formatArgs) do
@@ -175,9 +180,12 @@ local function boot(saved, characterSaved, compatibility)
             widget[method] = function() end
         end
         function widget:SetPoint(...) self._points[#self._points + 1] = { ... } end
+        function widget:GetNumPoints() return #self._points end
+        function widget:GetPoint(index) return unpack(self._points[index] or {}, 1, 5) end
         function widget:ClearAllPoints() self._points = {}; self.allPoints = nil end
         function widget:SetAllPoints(target) self.allPoints = target or self.parent; self._points = {} end
         function widget:SetColorTexture(...) self.color = { ... } end
+        function widget:SetVertexColor(...) self.vertexColor = { ... } end
         function widget:SetTextColor(...) self.textColor = { ... } end
         function widget:SetFont(path, size, flags) self.fontPath, self.fontSize, self.fontFlags = path, size, flags end
         function widget:SetJustifyH(value) self.justifyH = value end
@@ -558,28 +566,23 @@ local function near(actual, expected, message)
 end
 
 env, state, event, tick, command = boot(nil)
-check(#state.categories == 6 and state.registeredAddon == state.addon.settingsCategory
-    and not env.SettingsPanel:IsShown(), "Native AddOns entries register at login without opening the menu")
+check(#state.categories == 0 and not env.SmallerUISettings:IsShown(),
+    "The standalone settings window starts closed without registering an AddOns entry")
 command("")
 local panel = env.SmallerUIOptions
-check(panel and panel:IsShown(), "/sui opens settings")
-check(env.SettingsPanel:IsShown() and state.currentCategory == state.addon.scaleSettingsCategory,
-    "/sui opens the UI scaling subcategory")
-check(#env.UISpecialFrames == 0, "Addon does not register a separate settings window")
+check(panel:IsVisible() and env.SmallerUISettings:IsShown() and state.addon.currentOptionsPage == "scaling",
+    "/sui opens the Interface page in the standalone window")
+check(env.UISpecialFrames[1] == "SmallerUISettings", "Escape can close the standalone window")
 command("")
-check(env.SmallerUIOptions == panel and #state.categories == 6, "Opening settings reuses the same registered pages")
-check(state.registeredAddon == state.addon.settingsCategory
-    and state.addon.resourceSettingsCategory.parent == state.addon.settingsCategory,
-    "Personal resource settings are a native subcategory")
-check(env.SmallerUIGlobalSlider.template == "UISliderTemplateWithLabels", "Global slider uses Familiar Names' native labelled template")
-check(not env.SmallerUIKeep_minimap and not env.SmallerUIElementInput_minimap
-    and #state.addon:GetVisibleElementSettings() == 5, "Minimap scaling controls are hidden")
+check(env.SmallerUIOptions == panel and #state.categories == 0, "Opening settings reuses the same window")
+check(env.SmallerUIGlobalSlider.template == "UISliderTemplateWithLabels", "Global slider uses the labelled template")
+check(env.SmallerUIKeep_minimap and env.SmallerUIElementInput_minimap, "Minimap size is adjustable")
 env.SmallerUIElementInput_chat:SetText("1.25")
 env.SmallerUIGlobalSlider:SetValue(0.4)
 check(state.writes == 0 and not env.SmallerUIDB.enabled, "Slider edits a draft until Apply")
 state.Click(env.SmallerUIGlobalApply)
 near(state.scale, 0.4, "Global Apply uses slider draft")
-check(state.currentCategory == state.addon.scaleSettingsCategory, "Applying scale keeps the native settings page open")
+check(state.addon.currentOptionsPage == "scaling", "Applying scale keeps the standalone settings page open")
 check(env.SmallerUIElementInput_chat:GetText() == "1.25", "Applying global scale preserves unfinished element edits")
 env.SmallerUIGlobalInput:SetText("0.3333")
 env.SmallerUIGlobalInput.scripts.OnEnterPressed()
@@ -587,7 +590,7 @@ near(state.scale, 0.3333, "Exact entry supports finer values than slider step")
 env.SmallerUIGlobalInput:SetText("bad")
 state.Click(env.SmallerUIGlobalApply)
 near(state.scale, 0.3333, "Invalid UI entry keeps the previous scale")
-check(panel.feedback:GetText():find("between"), "Invalid entry shows inline feedback")
+check(env.SmallerUISettings.status:GetText():find("between"), "Invalid entry shows inline feedback")
 
 state.addon:SetElementIndependent("minimap", true)
 near(env.MinimapCluster:GetEffectiveScale(), 0.75, "Hidden minimap setting remains compatible with existing saved values")
@@ -654,8 +657,8 @@ check(corruptElements.SmallerUIDB.elements.player == 1.2
     and corruptElements.SmallerUIDB.elements.chat == nil
     and corruptElements.SmallerUIDB.elements.quests == nil
     and corruptElements.SmallerUIDB.elements.unknown == nil, "Corrupt element settings are discarded individually")
-env.SettingsPanel:Close(true)
-check(not panel:IsShown() and not env.SettingsPanel:IsShown(), "WoW's standard close dismisses the settings canvas")
+env.SmallerUISettings:Hide()
+check(not panel:IsVisible() and not env.SmallerUISettings:IsShown(), "Closing the window hides its page")
 
 local cancelEnv, cancelState, cancelEvent, cancelTick, cancelCommand = boot({ scale = 0.2, enabled = true })
 cancelState.combat = true
@@ -694,25 +697,25 @@ check(upgraded.SmallerUIDB.readyFlash == nil and upgraded.SmallerUICharDB.readyS
 local nativeQueue, nativeQueueState, nativeQueueEvent, nativeQueueTick, nativeQueueCommand = boot(nil)
 nativeQueueState.combat = true
 nativeQueueCommand("")
-check(not nativeQueue.SettingsPanel:IsShown() and nativeQueueState.addon.pendingOptionsPage == "scaling",
-    "/sui queues a native settings request during combat")
+check(not nativeQueue.SmallerUISettings:IsShown() and nativeQueueState.addon.pendingOptionsPage == "scaling",
+    "/sui queues a settings request during combat")
 nativeQueueState.combat = false
 nativeQueueEvent("PLAYER_REGEN_ENABLED"); nativeQueueTick()
-check(nativeQueue.SettingsPanel:IsShown()
-    and nativeQueueState.currentCategory == nativeQueueState.addon.scaleSettingsCategory,
-    "Queued /sui opens the native page after combat")
+check(nativeQueue.SmallerUISettings:IsShown()
+    and nativeQueueState.addon.currentOptionsPage == "scaling",
+    "Queued /sui opens the standalone page after combat")
 
 local minimapSaved = boot({ scale = 0.4, enabled = true, elements = { minimap = 1.2 } })
-check(minimapSaved.SmallerUIDB.elements.minimap == 1.2 and not minimapSaved.SmallerUIElementInput_minimap,
-    "Hiding minimap size controls preserves saved minimap preferences")
+check(minimapSaved.SmallerUIDB.elements.minimap == 1.2 and minimapSaved.SmallerUIElementInput_minimap,
+    "Exposing minimap size preserves saved minimap preferences")
 
 env, state, event, tick, command = boot(nil)
 local addon = state.addon
 check(not addon:GetResourceSettings().enabled and not addon:GetResourceSettings().partyEnabled
     and not addon:GetResourceDisplay() and state.cvarWrites == 0, "New resource displays are opt-in and leave Blizzard unchanged by default")
 addon:ShowOptions("resources")
-check(state.currentCategory == addon.resourceSettingsCategory
-    and addon.resourceSettingsCategory.parent == addon.settingsCategory, "Personal bars has a native settings subcategory")
+check(state.addon.currentOptionsPage == "resources"
+, "Personal bars has a standalone settings page")
 state.Click(env.SmallerUIPersonalEnabled)
 local hud = addon:GetResourceDisplay()
 check(hud.player:IsShown() and not hud.partyRoot:IsShown(), "Enabling personal resources shows player bars without a party")
@@ -780,7 +783,7 @@ state.units.player.health, state.units.player.maximum = 850, 1800
 event("UNIT_HEALTH", "player")
 
 addon:ShowOptions("party")
-check(state.currentCategory == addon.partySettingsCategory, "Party bars has its own simple native page")
+check(state.addon.currentOptionsPage == "party", "Party bars has its own simple standalone page")
 state.Click(env.SmallerUIPartyEnabled)
 check(not hud.partyRoot:IsShown(), "Optional party display stays hidden while solo")
 state.units.party1 = { health = 1900, maximum = 2500, power = 80, powerMax = 100, token = "ENERGY", name = "Alex" }
@@ -836,7 +839,7 @@ state.Click(env.SmallerUIPersonalEnabled)
 check(not hud.player:IsShown() and hud.partyRoot:IsShown() and state.cvars.nameplateShowSelf == "1",
     "Disabling personal bars restores Blizzard while optional party bars remain active")
 state.Click(env.SmallerUIPersonalMove)
-check(addon:IsEditingResources() and not env.SettingsPanel:IsShown() and hud.player:IsShown()
+check(addon:IsEditingResources() and not env.SmallerUISettings:IsShown() and hud.player:IsShown()
     and hud.party[4]:IsShown(), "Preview mode shows personal bars and sample party members even when solo or disabled")
 check(hud.player.health.mouseEnabled and hud.player.health.grip:IsShown(), "Edit mode enables drag and resize handles")
 local playerBefore = addon:GetResourceSettings().player.health.width
@@ -855,7 +858,7 @@ check(hud.player.health.fill:GetValue() == 4400, "Preview then demonstrates a he
 env.SmallerUIResourceEditor:Hide()
 check(not addon:IsEditingResources() and addon:GetResourceSettings().player.health.width == playerBefore
     and not hud.player:IsShown(), "Escape cancels sizing edits and removes temporary preview bars")
-check(state.currentCategory == addon.resourceSettingsCategory, "Exiting edit mode returns to the correct native settings page")
+check(state.addon.currentOptionsPage == "resources", "Exiting edit mode returns to the correct standalone settings page")
 state.Click(env.SmallerUIPersonalMove)
 addon:ResizeResourceBars("player", "health", 360, 33)
 addon:BeginResourceDrag(hud.player, "health")
@@ -878,7 +881,7 @@ addon:ResizeResourceBars("player", "health", 700, 80)
 state.combat = true
 event("PLAYER_REGEN_DISABLED")
 check(not addon:IsEditingResources() and addon:GetResourceSettings().player.health.width == 360
-    and addon.pendingOptionsPage == "resources", "Combat safely cancels editing and defers reopening native settings")
+    and addon.pendingOptionsPage == "resources", "Combat safely cancels editing and defers reopening settings")
 addon:SetResourceOption("root", "enabled", true)
 check(state.cvars.nameplateShowSelf == "1" and addon.resourceCVarPending,
     "Blizzard personal-display CVar changes are queued in combat")
@@ -889,7 +892,7 @@ check(not addon:BeginResourceEdit(), "Layout editing is unavailable during comba
 state.combat = false
 event("PLAYER_REGEN_ENABLED"); tick()
 check(state.cvars.nameplateShowSelf == "0" and not addon.resourceCVarPending
-    and state.currentCategory == addon.resourceSettingsCategory, "Queued native changes and the settings page resume after combat")
+    and state.addon.currentOptionsPage == "resources", "Queued Blizzard display changes and the settings page resume after combat")
 event("PLAYER_LOGOUT")
 check(state.cvars.nameplateShowSelf == "1" and env.SmallerUICharDB.originalSelfResourceCVar == nil,
     "Normal logout restores Blizzard's original personal resource setting")
@@ -1012,8 +1015,8 @@ local petEnv, petState, petEvent, petTick = boot(nil)
 local petAddon = petState.addon
 check(not petAddon:GetResourceSettings().petEnabled, "Pet bars is disabled by default")
 petAddon:ShowOptions("pet")
-check(petState.currentCategory == petAddon.petSettingsCategory
-    and petAddon.petSettingsCategory.parent == petAddon.settingsCategory, "Pet bars has its own native settings page")
+check(petState.addon.currentOptionsPage == "pet"
+, "Pet bars has its own standalone settings page")
 petState.Click(petEnv.SmallerUIPetEnabled)
 local petHud, petCfg = petAddon:GetResourceDisplay(), petAddon:GetResourceSettings()
 check(not petHud.pet:IsShown() and not petHud.player:IsShown() and not petHud.partyRoot:IsShown()
@@ -1097,7 +1100,7 @@ check(petCfg.pet.health.width == 260 and petCfg.pet.power.width == 180, "Unlinke
 petAddon:SetResourceDimensions("pet", { scale = 1.6, healthWidth = 310, healthHeight = 28, powerWidth = 280, powerHeight = 16 })
 near(petHud.pet:GetEffectiveScale(), 1.6, "Pet scale is independent of global UI scaling")
 petAddon:FinishResourceEdit(true)
-check(petState.currentCategory == petAddon.petSettingsCategory, "Pet editing returns to the pet settings page")
+check(petState.addon.currentOptionsPage == "pet", "Pet editing returns to the pet settings page")
 local reloadedPet, reloadedPetState = boot(nil, petEnv.SmallerUICharDB)
 check(reloadedPetState.addon:GetResourceSettings().pet.health.width == 310
     and reloadedPetState.addon:GetResourceSettings().pet.x == petCfg.pet.x,
@@ -1119,56 +1122,44 @@ petAddon:FinishResourceEdit(true)
 check(not petHud.pet:IsShown(), "Finishing a preview does not enable the pet display")
 petAddon:ShowOptions("resources")
 petAddon:BeginResourceEdit()
-check(not petHud.pet:IsShown(), "Disabled pet bars do not clutter editing from other settings pages")
+check(petHud.pet:IsShown(), "Move Mode previews pet bars from every settings page")
 petAddon:FinishResourceEdit(true)
 check(petState.cvarWrites == 0, "Pet settings and previews never alter Blizzard's personal resource preference")
 
 local menuEnv, menuState, menuEvent, menuTick, menuCommand = boot(nil)
 local menuAddon = menuState.addon
-local menuRoot = menuAddon.settingsCategory
-local expectedMenus = { "UI scaling", "Personal bars", "Party bars", "Pet bars", "Swing timer" }
-check(menuRoot.name == "Forever QoL" and menuEnv.SLASH_SMALLERUI3 == "/fqol", "The new branding and command are available")
-check(menuRoot.panel ~= menuEnv.SmallerUIOptions and menuRoot.alphabetical == false,
-    "The parent is a navigation group and preserves the chosen child order")
-for index, name in ipairs(expectedMenus) do
-    check(menuRoot.subcategories[index].name == name, "Native settings entry " .. index .. " is " .. name)
-end
-menuEnv.SettingsPanel:Show()
-menuEnv.SettingsPanel:SelectCategory(menuRoot)
-menuTick()
-check(menuState.currentCategory == menuAddon.scaleSettingsCategory and menuRoot:IsExpanded()
-    and menuEnv.SmallerUIOptions:IsShown() and not menuRoot.panel:IsShown(),
-    "Clicking the parent expands the group and selects the first child with scaling controls")
-menuAddon:ShowOptions("party")
-menuState.ToggleCategory(menuRoot)
-menuTick()
-check(not menuRoot:IsExpanded() and menuState.currentCategory == menuAddon.partySettingsCategory,
-    "Collapsing the dropdown stays collapsed without changing the selected settings page")
-menuState.pendingWoWSettings = true
-menuState.ToggleCategory(menuRoot)
-menuTick()
-check(menuRoot:IsExpanded() and menuState.currentCategory == menuAddon.scaleSettingsCategory
-    and menuState.pendingWoWSettings, "Expanding the dropdown selects scaling without reopening or discarding native settings")
-menuState.ToggleCategory(menuRoot)
-menuAddon:ShowOptions("pet")
-menuTick()
-check(menuState.currentCategory == menuAddon.petSettingsCategory,
-    "Opening a specific child from a collapsed group preserves that requested page")
-menuState.ToggleCategory(menuRoot)
-menuState.ToggleCategory(menuRoot)
-menuAddon:ShowOptions("party")
-menuTick()
-check(menuState.currentCategory == menuAddon.partySettingsCategory,
-    "A pending default selection never overrides a newer navigation request")
-menuState.ToggleCategory(menuRoot)
-menuState.ToggleCategory(menuRoot)
-menuEnv.SettingsPanel:Hide()
-menuTick()
-check(not menuEnv.SettingsPanel:IsShown(), "A queued dropdown selection never reopens closed settings")
 menuCommand("")
-menuTick()
-check(menuState.currentCategory == menuAddon.scaleSettingsCategory and #menuState.categories == 6,
-    "Slash access reuses the first child and never registers duplicate menus")
+menuState.Click(menuEnv.SmallerUISettings.entries.party)
+check(menuEnv.SmallerUIPartyOptions:IsVisible() and not menuEnv.SmallerUIOptions:IsVisible(),
+    "Sidebar switches between mutually exclusive pages")
+menuEnv.SmallerUIPartyOptions:SelectTab("appearance")
+menuAddon:BeginResourceEdit()
+check(not menuEnv.SmallerUISettings:IsShown(), "Move Mode hides the standalone settings window")
+menuState.Click(menuEnv.SmallerUIResourceDone)
+check(menuEnv.SmallerUIPartyOptions:IsVisible() and menuEnv.SmallerUIPartyOptions.tab == "appearance",
+    "Move Mode returns to the originating tab")
+
+do
+    local env, state, _, tick, command = boot(nil)
+    state.geometry = true
+    local frame = env.PlayerFrame
+    frame:SetSize(150, 40)
+    frame:SetPoint("CENTER", env.UIParent, "CENTER", -260, 120)
+    command("move")
+    state.Select(env.SmallerUIMoveTarget, "element:player/PlayerFrame")
+    local preview = env.SmallerUIElementMoveTarget
+    local _, _, _, before = frame:GetPoint(1)
+    state.shift, state.mouseDown = true, true
+    preview.scripts.OnDragStart(preview)
+    state.cursorX = 130
+    tick()
+    state.mouseDown = false
+    preview.scripts.OnDragStop(preview)
+    check(select(4, frame:GetPoint(1)) == before, "Blizzard frame edits preview before saving")
+    state.Click(env.SmallerUIResourceDone)
+    near((select(4, frame:GetPoint(1)) - before) * frame:GetEffectiveScale(), 30,
+        "Saving Move Mode applies the screen-relative Blizzard frame offset")
+end
 
 local forecastEnv, forecastState, forecastEvent, forecastTick = boot(nil, nil, { legacyCombatLog = true })
 local forecastAddon = forecastState.addon
@@ -1441,6 +1432,7 @@ end
 local stepEnv, stepState, stepEvent, stepTick = boot(nil)
 local stepAddon = stepState.addon
 stepAddon:ShowOptions("resources")
+stepEnv.SmallerUIPersonalOptions:SelectTab("layout")
 local widthInput, heightInput, scaleInput = stepEnv.SmallerUIPersonalhealthWidth, stepEnv.SmallerUIPersonalhealthHeight, stepEnv.SmallerUIPersonalscale
 stepState.Click(widthInput.up)
 check(stepAddon:GetResourceSettings().player.health.width == 241 and widthInput:GetText() == "241.00",
@@ -1472,8 +1464,6 @@ check(stepAddon:GetResourceSettings().player.health.width == 8192, "Fine-tuning 
 widthInput:SetText("bad")
 stepState.Click(widthInput.down)
 check(stepAddon:GetResourceSettings().player.health.width == 8191, "An invalid draft recovers from the saved value when stepping")
-stepState.Click(stepEnv.SmallerUIPersonalSealx.down)
-check(stepAddon:GetResourceSettings().seal.x == 7, "Seal offsets use the same arrow controls")
 stepState.mouseDown = true
 scaleInput.up.scripts.OnMouseDown(scaleInput.up, "LeftButton")
 scaleInput.up:Hide()
@@ -1730,6 +1720,7 @@ do
     styleAddon:ShowOptions("resources")
     local styleHud, styleCfg = styleAddon:GetResourceDisplay(), styleAddon:GetResourceSettings()
     local bar = styleHud.player.health
+    styleEnv.SmallerUIPersonalOptions:SelectTab("appearance")
     local originalHeight = styleEnv.SmallerUIPersonalOptions.content:GetHeight()
     check(not styleEnv.SmallerUIPersonalTextSettings:IsShown() and not styleEnv.SmallerUIPersonalResourceColours:IsShown(),
         "Advanced text and resource-colour controls start collapsed")
@@ -1880,7 +1871,7 @@ do
         return env, state, event, tick, addon, hud
     end
     local env, state, event, tick, addon, hud = Fixture()
-    check(env.SmallerUIMoveSelection:IsShown() and env.SmallerUIMoveSelection.label:GetText() == "Personal bars",
+    check(env.SmallerUIMoveSelection:IsShown() and env.SmallerUIMoveSelection.label:GetText() == "Personal health",
         "Move mode initially highlights and names the current display")
     local startX, startY = Bounds(hud.player.health)
     local petX, petY = Bounds(hud.pet.health)
@@ -1892,7 +1883,7 @@ do
     near(x, petX, "A bar snaps to another bar's edge within eight screen pixels")
     check(env.SmallerUIMoveVerticalGuide:IsShown() and addon:GetResourceMoveState().snapX == petX,
         "Active alignment displays a vertical guide at the matched edge")
-    check(env.SmallerUIMoveSelection.label:GetText() == "Personal bars - health",
+    check(env.SmallerUIMoveSelection.label:GetText() == "Personal health",
         "Independent dragging identifies the selected bar")
     state.shift = true
     tick()
@@ -2105,7 +2096,7 @@ do
     check(addon:GetResourceSettings().player.health.x ~= beforeLogout, "A pending layout edit is available before confirmation")
     event("PLAYER_LOGOUT")
     near(addon:GetResourceSettings().player.health.x, beforeLogout, "Logout/reload discards unconfirmed layout edits")
-    check(not addon:IsEditingResources() and not env.SmallerUIMoveOverlay:IsShown() and not env.SettingsPanel:IsShown(),
+    check(not addon:IsEditingResources() and not env.SmallerUIMoveOverlay:IsShown() and not env.SmallerUISettings:IsShown(),
         "Logout cleans up move mode without reopening settings")
 end
 
@@ -2311,6 +2302,7 @@ do
     local health, power = hud.player.health, hud.player.power
     local oldHealthX, oldHealthY = health:GetCenter()
     local fill = health.fill:GetStatusBarTexture()
+    env.SmallerUIPersonalOptions:SelectTab("layout")
     state.Select(env.SmallerUIPersonalLayout, 2)
     check(cfg.player.curved and env.SmallerUIPersonalArcwidth:IsVisible()
         and not env.SmallerUIPersonalhealthWidth:IsVisible(), "Selecting Curved HUD exposes its own sizing controls")
@@ -2319,12 +2311,17 @@ do
     local centre = hud.player:GetCenter()
     near(centre - hx, px - centre, "The arcs straddle the display centre symmetrically")
     check(hy == py and hx < px and health.fill.orientation == "VERTICAL" and power.fill.orientation == "VERTICAL"
-        and fill.mask == health.arcMask and power.arcMask.texCoords[1] == 1
-        and not health.mouseEnabled, "Both live bars use mirrored masks and vertical, mouse-transparent fills")
-    check(health.trail:GetStatusBarTexture().mask == health.arcMask and health.pulse.mask == health.arcMask
-        and health.forecasts.direct:GetStatusBarTexture().mask == health.arcMask
+        and fill:GetAlpha() == 0 and power.fill.arcTexture.texCoords[1] == 1
+        and not health.mouseEnabled, "Both live bars use mirrored artwork and vertical, mouse-transparent fills")
+    check(health.fill.arcClip.allPoints == fill and health.fill.arcClip.clipsChildren
+        and health.fill.arcTexture.allPoints == health and health.fill.arcTexture.vertexColor[1] == health.fill.barColor[1]
+        and power.fill.arcTexture.vertexColor[3] == power.fill.barColor[3],
+        "Arc artwork keeps its full size and resource colour while the native fill controls clipping")
+    check(health.trail.arcClip.allPoints == health.trail:GetStatusBarTexture()
+        and health.arcPulse.parent == health.fill.arcClip
+        and health.forecasts.direct.arcTexture.allPoints == health
         and health.forecasts.direct._points[1][1] == "BOTTOMLEFT",
-        "The same curve clips the trail, pulse, and incoming-heal extension")
+        "Trail, pulse and forecasts use the same clipped arc shape")
     state.units.player.health, state.units.player.power = privateValue, privateValue
     event("UNIT_HEALTH", "player")
     event("UNIT_POWER_UPDATE", "player")
@@ -2346,7 +2343,7 @@ do
     state.mouseDown = false
     state.Select(env.SmallerUIPersonalLayout, 1)
     local horizontalX, horizontalY = health:GetCenter()
-    check(not cfg.player.curved and health.fill.orientation == "HORIZONTAL" and fill.mask == nil
+    check(not cfg.player.curved and health.fill.orientation == "HORIZONTAL" and fill:GetAlpha() == 1 and not health.fill.arcClip:IsShown()
         and not health.arcTrack:IsShown() and horizontalX == oldHealthX and horizontalY == oldHealthY
         and health.forecasts.direct._points[1][1] == "TOPLEFT",
         "Switching back restores horizontal position, textures and forecast anchors")
@@ -2463,7 +2460,7 @@ do
     near(cfg.x, oldX + 40, "The swing timer uses the shared drag position")
     addon:FinishResourceEdit(false)
     check(addon:GetResourceSettings().swing.x == oldX and not timer:IsShown()
-        and state.currentCategory == addon.swingSettingsCategory, "Cancel restores the timer position and returns to its settings")
+        and state.addon.currentOptionsPage == "swing", "Cancel restores the timer position and returns to its settings")
     local noSwingEnv = boot(nil, nil, { noEventMetadata = true })
     check(noSwingEnv.SmallerUISwingEnabled.enabled == false, "Unavailable swing events leave the feature disabled")
 end

@@ -111,36 +111,56 @@ local function TrimTexture(bar)
     return texture
 end
 
+local function ArcTexture(bar, parent, layer, file)
+    local texture = parent:CreateTexture(nil, layer)
+    texture:SetTexture(media .. file)
+    texture:SetAllPoints(bar)
+    if bar.resourceKind == "power" then texture:SetTexCoord(1, 0, 0, 1) end
+    return texture
+end
+
+local function OrientResourceFill(bar, status, curved)
+    local fill = status:GetStatusBarTexture()
+    status:SetOrientation(curved and "VERTICAL" or "HORIZONTAL")
+    if curved and not status.arcClip then
+        -- The native fill supplies only the bounds. Clip the full-size arc
+        -- artwork so it stays aligned with the track at every fill level.
+        local clip = CreateFrame("Frame", nil, status)
+        clip:SetAllPoints(fill)
+        clip:SetClipsChildren(true)
+        clip:EnableMouse(false)
+        status.arcClip = clip
+        status.arcTexture = ArcTexture(bar, clip, "ARTWORK", "ArcFill.tga")
+        status.arcTexture:SetVertexColor(status:GetStatusBarColor())
+    end
+    if status.arcClip then status.arcClip:SetShown(curved) end
+    fill:SetAlpha(curved and 0 or 1)
+end
+
+function Addon:SetResourceFillColour(status, r, g, b, alpha)
+    status:SetStatusBarColor(r, g, b, alpha or 1)
+    if status.arcTexture then status.arcTexture:SetVertexColor(r, g, b, alpha or 1) end
+end
+
 function Addon:SetResourceBarCurved(bar, curved)
     if bar.curved == curved then return end
     bar.curved = curved
-    if curved and not bar.arcMask then
-        local function Place(texture, file)
-            texture:SetTexture(media .. file, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-            texture:SetAllPoints(bar)
-            if bar.resourceKind == "power" then texture:SetTexCoord(1, 0, 0, 1) end
-            return texture
-        end
-        bar.arcMask = Place(bar:CreateMaskTexture(), "ArcFill.tga")
-        bar.arcTrack = Place(bar:CreateTexture(nil, "BACKGROUND"), "ArcFill.tga")
-        bar.arcOutline = Place(bar:CreateTexture(nil, "BORDER"), "ArcOutline.tga")
+    if curved and not bar.arcTrack then
+        bar.arcTrack = ArcTexture(bar, bar, "BACKGROUND", "ArcFill.tga")
+        bar.arcOutline = ArcTexture(bar, bar, "BORDER", "ArcOutline.tga")
     end
-    if not bar.arcMask then return end
+    if not bar.arcTrack then return end
 
-    local function Mask(texture)
-        if curved then texture:AddMaskTexture(bar.arcMask)
-        else texture:RemoveMaskTexture(bar.arcMask) end
-    end
-    local function Orient(status)
-        status:SetOrientation(curved and "VERTICAL" or "HORIZONTAL")
-        status:SetRotatesTexture(curved)
-        Mask(status:GetStatusBarTexture())
-    end
-    Orient(bar.fill)
-    Orient(bar.trail)
-    Mask(bar.pulse)
+    bar.pulse:Hide()
+    if bar.arcPulse then bar.arcPulse:Hide() end
+    OrientResourceFill(bar, bar.fill, curved)
+    OrientResourceFill(bar, bar.trail, curved)
     if bar.forecasts then
-        for _, kind in ipairs({ "direct", "hot", "dot" }) do Orient(bar.forecasts[kind]) end
+        for _, kind in ipairs({ "direct", "hot", "dot" }) do OrientResourceFill(bar, bar.forecasts[kind], curved) end
+    end
+    if curved and not bar.arcPulse then
+        bar.arcPulse = ArcTexture(bar, bar.fill.arcClip, "OVERLAY", "ArcFill.tga")
+        bar.arcPulse:Hide()
     end
     bar.arcTrack:SetShown(curved)
     bar.arcOutline:SetShown(curved)

@@ -106,6 +106,9 @@ local function EnsureTimer()
         dragging = Addon:StartResourceMove(timer, timer, "swing", "Swing timer", "swing", false)
     end)
     timer:SetScript("OnDragStop", function() Addon:EndSwingTimerDrag() end)
+    timer:SetScript("OnMouseDown", function(_, button)
+        if button == "LeftButton" then Addon:SelectMoveElement("swing", "swing") end
+    end)
     timer:Hide()
 end
 
@@ -137,10 +140,6 @@ local function Present(preview)
     end
 end
 
-local function IsPreview(settings)
-    return Addon:IsEditingResources() and (settings.enabled or Addon.currentOptionsPage == "swing")
-end
-
 function Addon:ApplySwingTimer()
     local settings = self:GetResourceSettings().swing
     local enabled = settings.enabled and self:SupportsSwingTimer() and true or false
@@ -151,7 +150,7 @@ function Addon:ApplySwingTimer()
         listening = enabled
     end
     if not enabled then deadline = nil end
-    local preview = IsPreview(settings)
+    local preview = Addon:IsEditingResources()
     if enabled or preview then EnsureTimer() end
     if timer and not dragging then
         timer:ClearAllPoints()
@@ -191,5 +190,5 @@ driver:SetScript("OnEvent", function(_, event, interval, swingType)
     else
         deadline = nil
     end
-    Present(IsPreview(settings))
+    Present(Addon:IsEditingResources())
 end)

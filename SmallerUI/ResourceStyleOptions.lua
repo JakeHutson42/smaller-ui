@@ -36,10 +36,8 @@ end
 function Addon:BuildResourceStyleOptions(page, scope, prefix, content, appearance)
     local UI = self.OptionsUI
     local host = CreateFrame("Frame", prefix .. "Styling", content)
-    host:SetPoint("TOPLEFT", 0, appearance - 184)
+    host:SetPoint("TOPLEFT", 0, appearance)
     host:SetWidth(620)
-    page.tail = CreateFrame("Frame", prefix .. "Tail", content)
-    page.tail:SetSize(620, scope == "player" and 480 or 100)
     local text = CreateFrame("Frame", prefix .. "TextSettings", host)
     text:SetPoint("TOPLEFT", 0, advancedTop)
     text:SetSize(620, 224)
@@ -61,9 +59,8 @@ function Addon:BuildResourceStyleOptions(page, scope, prefix, content, appearanc
         host:SetHeight(height)
         resources:ClearAllPoints()
         resources:SetPoint("TOPLEFT", 0, advancedTop - textHeight)
-        page.tail:ClearAllPoints()
-        page.tail:SetPoint("TOPLEFT", 0, appearance - 184 - height - 28)
-        content:SetHeight(-appearance + 184 + height + 28 + page.tail:GetHeight())
+        content:SetHeight(-appearance + height + 12)
+        if page.tab == "appearance" then page.content:SetHeight(content:GetHeight()) end
     end
     local function ColourButton(parent, name, label, x, y, kind, token)
         local button = UI.Button(parent, prefix .. name, label, x, y, 180,
@@ -84,13 +81,14 @@ function Addon:BuildResourceStyleOptions(page, scope, prefix, content, appearanc
     UI.Tooltip(theme, "Apply a texture, trim and palette to these bars. You can adjust each setting below.")
     local healthPreview = PreviewBar(host, -4, 17, 78)
     local powerPreview = PreviewBar(host, -26, 10, 61)
-    page.themeColours = UI.Checkbox(host, prefix .. "ThemeColours", "Apply preset colours", 4, -40,
+    page.themeColours = UI.Switch(host, prefix .. "ThemeColours", "Apply preset colours", 4, -40,
         function(enabled) Addon:SetResourceStyle(scope, "themeColours", enabled) end,
         "When enabled, applying a preset replaces the bar, border, background and accent colours. Turn it off to keep your palette.")
-    page.border = UI.Checkbox(host, prefix .. "Border", "Show bar borders", 4, -78,
+    page.border = UI.Switch(host, prefix .. "Border", "Bar borders", 4, -78,
         function(enabled) Addon:SetResourceStyle(scope, "border", enabled) end,
         "Hide the border around your bars. Edit mode still shows a temporary guide.")
-    page.borderColour = ColourButton(host, "BorderColour", "Border colour", 208, -78, "borderColour")
+    page.border:SetWidth(208)
+    page.borderColour = ColourButton(host, "BorderColour", "Border colour", 224, -78, "borderColour")
     page.trackColour = ColourButton(host, "TrackColour", "Background colour", 414, -78, "trackColour")
     UI.Label(host, "Bar texture", 12, -122)
     page.texture = UI.Select(host, prefix .. "BarTexture", 126, -116, 208, Addon.resourceTextures,
@@ -160,14 +158,13 @@ function Addon:BuildResourceStyleOptions(page, scope, prefix, content, appearanc
         inputs[key] = input
     end
     Input("fontSize", "Text size", 432, -42, 328, 6, 48)
-    page.autoFontSize = UI.Checkbox(text, prefix .. "AutoFontSize", "Automatic size", 320, -78,
+    page.autoFontSize = UI.Switch(text, prefix .. "AutoFontSize", "Automatic size", 320, -78,
         function(enabled) Addon:SetResourceStyle(scope, "autoFontSize", enabled) end)
-    page.shortNumbers = UI.Checkbox(text, prefix .. "ShortNumbers", "Short numbers (12.3k)", 4, -132,
+    page.shortNumbers = UI.Switch(text, prefix .. "ShortNumbers", "Short numbers (12.3k)", 4, -132,
         function(enabled) Addon:SetResourceStyle(scope, "shortNumbers", enabled) end,
         "Use compact numbers when public values are available. Exact native values remain in restricted contexts.")
     page.textColour = ColourButton(text, "TextColour", "Text colour", 328, -130, "textColour")
     Input("backgroundOpacity", "Background %", 148, -178, 12, 0, 100)
-    UI.Label(text, "Resource labels appear with right-aligned text when space allows.", 328, -177, "GameFontDisableSmall", 270)
     UI.Label(resources, "Resource", 12, -6)
     page.resourceSelect = UI.Select(resources, prefix .. "ResourceToken", 148, 0, 164,
         function() return Addon:GetResourceColourChoices(page.resourceToken) end,
@@ -178,8 +175,6 @@ function Addon:BuildResourceStyleOptions(page, scope, prefix, content, appearanc
         Addon:CancelResourceColourPicker(scope)
         Addon:SetResourcePowerOverride(scope, page.resourceToken, nil)
     end)
-    UI.Label(resources, "Choose a colour for each resource.", 12, -48, "GameFontDisableSmall", 300)
-    UI.Label(resources, "Overrides follow the resource, including Druid form changes. Uses power-type colours.", 12, -84, "GameFontDisableSmall", 580)
     function page:RefreshStyling(syncInput)
         local style = Settings()
         self.border:SetChecked(style.border)
@@ -206,5 +201,4 @@ function Addon:BuildResourceStyleOptions(page, scope, prefix, content, appearanc
         end
     end
     Reflow()
-    return page.tail
 end

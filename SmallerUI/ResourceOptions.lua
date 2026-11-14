@@ -2,18 +2,9 @@ local _, Addon = ...
 local pages = {}
 local activePicker
 local definitions = {
-    player = { key = "resources", prefix = "SmallerUIPersonal", title = "Personal bars", enabled = "enabled",
-        subtitle = "Health and power bars, exactly where you want them.",
-        tip = "Show your health and current primary resource. Each character keeps their own layout.",
-        status = "Live health and power updates. Layout saves for this character." },
-    party = { key = "party", prefix = "SmallerUIParty", title = "Party bars", enabled = "partyEnabled",
-        subtitle = "A compact health and power display for your party.",
-        tip = "Show up to four party members. These visual bars leave your normal party controls available.",
-        status = "Enabled. Party members appear when you are in a group." },
-    pet = { key = "pet", prefix = "SmallerUIPet", title = "Pet bars", enabled = "petEnabled",
-        subtitle = "Your pet's health and power, with a layout of its own.",
-        tip = "Show your active pet's health and current power. Automatically hides when no pet is present.",
-        status = "Enabled. Bars appear while you have an active pet." },
+    player = { key = "resources", prefix = "SmallerUIPersonal", title = "Personal bars", enabled = "enabled" },
+    party = { key = "party", prefix = "SmallerUIParty", title = "Party bars", enabled = "partyEnabled" },
+    pet = { key = "pet", prefix = "SmallerUIPet", title = "Pet bars", enabled = "petEnabled" },
 }
 
 function Addon:CancelResourceColourPicker(scope)
@@ -81,11 +72,12 @@ function Addon:RefreshResourceOptions(syncInput)
         local enabled = cfg[definition.enabled]
         page.enabled:SetChecked(enabled)
         page.linked:SetChecked(settings.linked)
+        page.healthEnabled:SetChecked(settings.health.enabled)
+        page.powerEnabled:SetChecked(settings.power.enabled)
+        if page.arcLinked then page.arcLinked:SetChecked(settings.arc.linked) end
         if page.layout then
             page.horizontalLayout:SetShown(not settings.curved)
             page.arcLayout:SetShown(settings.curved)
-            page.moveNote:SetText(settings.curved and "Drag either arc to move the pair. Hold Shift to ignore snapping. Escape cancels."
-                or "Drag to move. Hold Shift to ignore snapping. Escape cancels. Corners resize.")
             if page:IsShown() then page.layout:GenerateMenu() end
         end
         page.values:SetChecked(settings.values)
@@ -111,9 +103,10 @@ function Addon:RefreshResourceOptions(syncInput)
             page.dots:SetChecked(periodic and cfg.periodicDamage)
             page.hots:SetEnabled(periodic)
             page.dots:SetEnabled(periodic)
-            page.periodicNote:SetText(periodic and "Applies to your personal, party and pet bars. Periodic previews are estimates."
-                or "Separate HoT/DoT estimates are unavailable on this client. Incoming healing uses WoW's prediction.")
-            page.seal:SetChecked(cfg.seal.enabled)
+            if page.seal then
+                page.seal:SetChecked(cfg.seal.enabled)
+                page.sealLinked:SetChecked(cfg.seal.linked)
+            end
         else
             page.names:SetChecked(settings.names)
             page.portraits:SetChecked(settings.portraits)
@@ -128,7 +121,7 @@ function Addon:RefreshResourceOptions(syncInput)
                 for key, input in pairs(page.sealInputs) do input:SetText(string.format("%.2f", cfg.seal[key])) end
             end
         end
-        local status = enabled and definition.status or "Disabled. Preview and position the bars before enabling."
+        local status = ""
         if InCombatLockdown() then status = "Live values keep updating. Move and resize after combat."
         elseif self.resourceCVarPending then status = "Blizzard display changes will apply after combat." end
         self:SetPageStatus(definition.key, status)
@@ -141,50 +134,64 @@ function Addon:BuildResourceOptions()
         local player = scope == "player"
         local definition = definitions[scope]
         local key, prefix = definition.key, definition.prefix
-        local page = UI.Page(prefix .. "Options", definition.title, definition.subtitle, player and 1140 or scope == "party" and 780 or 760)
+        local page = UI.Page(prefix .. "Options", definition.title, 360)
         pages[scope], page.inputs = page, {}
-        local content = page.content
+        local function Panel(height)
+            local panel = CreateFrame("Frame", nil, page.content)
+            panel:SetPoint("TOPLEFT")
+            panel:SetSize(620, height)
+            return panel
+        end
+        local display = Panel(player and 478 or 284)
+        local layout = Panel(scope == "party" and 360 or player and Addon:IsPaladin() and 424 or 306)
+        local appearancePanel = Panel(340)
+        local content = display
         local function Notice(text, error) Addon:OptionsFeedback(text, error, key) end
-        local function Checkbox(name, label, x, y, settingScope, setting, tip, parent)
-            return UI.Checkbox(parent or content, prefix .. name, label, x, y, function(enabled)
+        local function Switch(name, label, x, y, settingScope, setting, tip, parent)
+            return UI.Switch(parent or content, prefix .. name, label, x, y, function(enabled)
                 Addon:SetResourceOption(settingScope, setting, enabled)
             end, tip)
         end
-        local enableLabel = player and "Show personal bars" or scope == "pet" and "Show pet bars" or "Show party bars"
-        page.enabled = Checkbox("Enabled", enableLabel, 4, 0, "root", definition.enabled, definition.tip)
+        UI.Section(display, "Visibility", 0)
+        page.enabled = Switch("Enabled", "Show " .. definition.title:lower(), 12, -34, "root", definition.enabled)
+        page.healthEnabled = UI.Switch(display, prefix .. "HealthEnabled", "Health bar", 12, -72,
+            function(enabled) Addon:SetResourceBarEnabled(scope, "health", enabled) end)
+        page.powerEnabled = UI.Switch(display, prefix .. "PowerEnabled", "Power bar", 314, -72,
+            function(enabled) Addon:SetResourceBarEnabled(scope, "power", enabled) end)
         if player then
-            page.hideBlizzard = Checkbox("HideBlizzard", "Hide Blizzard's personal bar", 320, 0, "root", "hideBlizzard",
-                "Hide the built-in personal resource display while custom bars are enabled. Your previous setting is restored when disabled or on a normal logout. Changes wait until combat ends.")
+            page.hideBlizzard = Switch("HideBlizzard", "Hide Blizzard's personal bar", 314, -34, "root", "hideBlizzard")
+        else
+            page.names = Switch("Names", scope == "pet" and "Show name" or "Show names", 12, -110, scope, "names")
+            page.portraits = Switch("Portraits", scope == "pet" and "Show portrait" or "Show portraits", 314, -110, scope, "portraits")
         end
-        UI.Section(content, "Position and size", -54)
-        page.move = UI.Button(content, prefix .. "Move", "Move mode", 12, -90, 172, function() Addon:BeginResourceEdit() end)
-        UI.Button(content, prefix .. "Reset", "Reset layout", 196, -90, 140, function()
+        content = layout
+        UI.Section(layout, "Position and size", 0)
+        page.move = UI.Button(layout, prefix .. "Move", "Move Mode", 12, -34, 172, function() Addon:BeginResourceEdit() end)
+        UI.Button(layout, prefix .. "Reset", "Reset layout", 196, -34, 140, function()
             Addon:ResetResourceLayout(scope)
             Addon:RefreshResourceOptions(true)
             Notice("Default layout restored.")
         end)
-        page.moveNote = UI.Label(content, "Drag to move. Hold Shift to ignore snapping. Escape cancels. Corners resize.",
-            12, -126, "GameFontDisableSmall", 580)
         local horizontal = content
         if player then
-            page.layout = UI.Select(content, prefix .. "Layout", 356, -90, 212, { { 1, "Horizontal bars" }, { 2, "Curved HUD" } },
+            page.layout = UI.Select(content, prefix .. "Layout", 356, -34, 212, { { 1, "Horizontal bars" }, { 2, "Curved HUD" } },
                 function() return Addon:GetResourceSettings().player.curved and 2 or 1 end,
                 function(value)
                     Addon:SetResourceOption("player", "curved", value == 2)
                     Addon:RefreshResourceOptions(true)
                 end)
-            UI.Tooltip(page.layout, "Choose stacked horizontal bars or put health and power on either side of the screen centre.")
+            UI.Tooltip(page.layout, "Choose stacked bars or arcs on either side of the screen.")
             horizontal = CreateFrame("Frame", nil, content)
             horizontal:SetPoint("TOPLEFT", 0, 0)
-            horizontal:SetSize(620, 390)
+            horizontal:SetSize(620, 290)
             page.horizontalLayout = horizontal
             page.arcLayout = CreateFrame("Frame", nil, content)
             page.arcLayout:SetPoint("TOPLEFT", 0, 0)
-            page.arcLayout:SetSize(620, 390)
+            page.arcLayout:SetSize(620, 290)
             page.arcLayout:Hide()
             page.arcInputs = {}
         end
-        page.linked = Checkbox("Linked", "Move and resize bars together", 4, -160, scope, "linked",
+        page.linked = Switch("Linked", "Move and resize bars together", 4, -100, scope, "linked",
             "In edit mode, dragging moves the whole group and corner resizing changes both bars proportionally. Uncheck to move and resize each bar separately. Exact sizes below can always be entered individually.", horizontal)
         local function Apply(arc)
             local inputs = arc and page.arcInputs or page.inputs
@@ -194,7 +201,7 @@ function Addon:BuildResourceOptions()
                 if not values[field] then Notice("Enter a valid number in every size field.", true); return end
             end
             if not Addon:SetResourceDimensions(arc and "arc" or scope, values) then
-                Notice(arc and "Arc width 20–120, height 80–640, separation 80–1000, scale 0.25–3."
+                Notice(arc and "Arc width: 20-120. Height: 80-640. Separation: 80-1000. Scale: 0.25-3."
                     or "Width: 8-8192. Height: 2-1024. Scale: 0.10-5.00. Spacing: 0-200.", true)
                 return
             end
@@ -229,46 +236,45 @@ function Addon:BuildResourceOptions()
             local inputs = arc and page.arcInputs or page.inputs
             inputs[field] = input
         end
-        UI.Label(horizontal, "Scale", 12, -212)
-        Input("scale", 148, -206)
-        UI.Label(horizontal, "Bar gap", 312, -212)
-        Input("gap", 444, -206)
-        UI.Label(horizontal, "Bar", 12, -256, "GameFontNormalSmall")
-        UI.Label(horizontal, "Width", 148, -256, "GameFontNormalSmall")
-        UI.Label(horizontal, "Height", 308, -256, "GameFontNormalSmall")
-        UI.Label(horizontal, "Health", 12, -286)
-        UI.Label(horizontal, "Power", 12, -324)
-        Input("healthWidth", 148, -280)
-        Input("healthHeight", 308, -280)
-        Input("powerWidth", 148, -318)
-        Input("powerHeight", 308, -318)
-        UI.Button(horizontal, prefix .. "Apply", "Apply sizes", 432, -318, 132, function() Apply(false) end)
-        UI.Label(horizontal, "Use Scale for the whole group, or enter each bar's exact dimensions.", 12, -358, "GameFontDisableSmall", 580)
+        UI.Label(horizontal, "Scale", 12, -152)
+        Input("scale", 148, -146)
+        UI.Label(horizontal, "Bar gap", 312, -152)
+        Input("gap", 444, -146)
+        UI.Label(horizontal, "Bar", 12, -196, "GameFontNormalSmall")
+        UI.Label(horizontal, "Width", 148, -196, "GameFontNormalSmall")
+        UI.Label(horizontal, "Height", 308, -196, "GameFontNormalSmall")
+        UI.Label(horizontal, "Health", 12, -226)
+        UI.Label(horizontal, "Power", 12, -264)
+        Input("healthWidth", 148, -220)
+        Input("healthHeight", 308, -220)
+        Input("powerWidth", 148, -258)
+        Input("powerHeight", 308, -258)
+        UI.Button(horizontal, prefix .. "Apply", "Apply sizes", 432, -258, 132, function() Apply(false) end)
         if player then
-            UI.Label(page.arcLayout, "Health on the left. Your active resource on the right.", 12, -171, "GameFontHighlight")
-            UI.Label(page.arcLayout, "Arc scale", 12, -212)
-            Input("scale", 148, -206, true)
-            UI.Label(page.arcLayout, "Separation", 312, -212)
-            Input("gap", 444, -206, true)
-            UI.Label(page.arcLayout, "Arc width", 12, -258)
-            Input("width", 148, -252, true)
-            UI.Label(page.arcLayout, "Arc height", 312, -258)
-            Input("height", 444, -252, true)
-            UI.Button(page.arcLayout, prefix .. "ArcApply", "Apply arc sizes", 432, -318, 132, function() Apply(true) end)
+            page.arcLinked = UI.Switch(page.arcLayout, prefix .. "ArcLinked", "Move arcs together", 4, -100,
+                function(enabled) Addon:SetResourceOption("arc", "linked", enabled) end)
+            UI.Label(page.arcLayout, "Arc scale", 12, -152)
+            Input("scale", 148, -146, true)
+            UI.Label(page.arcLayout, "Separation", 312, -152)
+            Input("gap", 444, -146, true)
+            UI.Label(page.arcLayout, "Arc width", 12, -198)
+            Input("width", 148, -192, true)
+            UI.Label(page.arcLayout, "Arc height", 312, -198)
+            Input("height", 444, -192, true)
+            UI.Button(page.arcLayout, prefix .. "ArcApply", "Apply arc sizes", 432, -258, 132, function() Apply(true) end)
         end
-        local appearance = -412
         if scope == "party" then
-            UI.Label(content, "Member spacing", 12, -402)
-            Input("spacing", 148, -396)
-            appearance = -458
+            UI.Label(layout, "Member spacing", 12, -316)
+            Input("spacing", 148, -310)
         end
-        UI.Section(content, "Combat visibility", appearance)
-        page.combatOnly = UI.Checkbox(content, prefix .. "CombatOnly", "Hide out of combat", 4, appearance - 36,
-            function(enabled) Addon:SetResourceStyle(scope, "hideOutOfCombat", enabled) end,
-            "Show this display during combat and in Move Mode.")
+        content = display
+        local combat = player and -118 or -154
+        UI.Section(display, "Combat visibility", combat)
+        page.combatOnly = UI.Switch(display, prefix .. "CombatOnly", "Hide out of combat", 12, combat - 30,
+            function(enabled) Addon:SetResourceStyle(scope, "hideOutOfCombat", enabled) end)
         local function OpacitySlider(key, caption, x)
-            local slider = CreateFrame("Slider", prefix .. key, content, "UISliderTemplateWithLabels")
-            slider:SetPoint("TOPLEFT", x, appearance - 100)
+            local slider = CreateFrame("Slider", prefix .. key, display, "UISliderTemplateWithLabels")
+            slider:SetPoint("TOPLEFT", x, combat - 88)
             slider:SetSize(236, 16)
             slider:SetMinMaxValues(0, 100)
             slider:SetValueStep(1)
@@ -286,19 +292,16 @@ function Addon:BuildResourceOptions()
             combatOpacity = OpacitySlider("combatOpacity", "In-combat opacity", 12),
             outOfCombatOpacity = OpacitySlider("outOfCombatOpacity", "Out-of-combat opacity", 320),
         }
-        UI.Tooltip(page.opacitySliders.outOfCombatOpacity, "Applies when Hide out of combat is off.")
-        appearance = appearance - 156
-        UI.Section(content, "Appearance", appearance)
-        page.values = Checkbox("Values", "Show health and power values", 4, appearance - 36, scope, "values")
+        content = appearancePanel
+        local appearance = 0
+        UI.Section(content, "Bar style", appearance)
+        page.values = Switch("Values", "Show bar values", 12, -34, scope, "values")
         if player then
-            page.smooth = Checkbox("Smooth", "Animate change trail", 320, appearance - 36, "root", "smooth",
-                "Animate only the dim recent-change trail. Current health, power and their numbers always update immediately from WoW, with no smoothing or timer delay.")
-        else
-            page.names = Checkbox("Names", scope == "pet" and "Show name" or "Show names", 320, appearance - 36, scope, "names")
-            page.portraits = Checkbox("Portraits", scope == "pet" and "Show portrait" or "Show portraits", 4, appearance - 70, scope, "portraits")
+            page.smooth = Switch("Smooth", "Animate change trail", 314, -34, "root", "smooth",
+                "Animate the trail behind each bar. Live values update immediately.")
         end
         local function ColourButton(kind, label, x)
-            local button = UI.Button(content, prefix .. kind .. "Colour", label, x, appearance - 112, 180,
+            local button = UI.Button(content, prefix .. kind .. "Colour", label, x, appearance - 72, 180,
                 function() Addon:OpenResourceColourPicker(scope, kind) end)
             button.swatch = button:CreateTexture(nil, "OVERLAY")
             button.swatch:SetSize(14, 14)
@@ -309,66 +312,67 @@ function Addon:BuildResourceOptions()
         end
         page.healthColour = ColourButton("health", "Health colour", 12)
         page.powerColour = ColourButton("power", "Power colour", 208)
-        UI.Button(content, prefix .. "ResetColours", "Reset colours", 408, appearance - 112, 164, function()
+        UI.Button(content, prefix .. "ResetColours", "Reset colours", 408, appearance - 72, 164, function()
             Addon:CancelResourceColourPicker(scope)
             Addon:ResetResourceColours(scope)
             Notice("Default colours restored: red health and power-type colours.")
         end)
-        page.powerByType = UI.Checkbox(content, prefix .. "PowerByType", "Use power-type colours", 4, appearance - 150,
+        page.powerByType = UI.Switch(content, prefix .. "PowerByType", "Use power-type colours", 4, appearance - 106,
             function(enabled)
                 Addon:CancelResourceColourPicker(scope)
                 Addon:SetResourcePowerByType(scope, enabled)
             end, "Automatically colour Mana, Rage, Energy, Focus and other resources to match their type. Uncheck to use your custom power colour.")
-        content = Addon:BuildResourceStyleOptions(page, scope, prefix, content, appearance)
+        Addon:BuildResourceStyleOptions(page, scope, prefix, appearancePanel, -142)
+        content = display
         if player then
-            UI.Section(content, "Health previews", 0)
-            page.incoming = Checkbox("IncomingHeals", "Show incoming healing", 4, -36, "root", "incomingHeals",
+            local forecasts = -252
+            UI.Section(content, "Health previews (all bars)", forecasts)
+            page.incoming = Switch("IncomingHeals", "Show incoming healing", 12, forecasts - 32, "root", "incomingHeals",
                 "A lighter extension shows healing reported by WoW, including your own casts. It clears when casts end or cancel. Instant heals may apply before a preview can appear.")
-            page.hots = Checkbox("PeriodicHeals", "Estimate healing over time", 4, -70, "root", "periodicHeals",
+            page.hots = Switch("PeriodicHeals", "Estimate healing over time", 314, forecasts - 32, "root", "periodicHeals",
                 "A pale extension estimates the next 5 seconds after observing at least two ticks of an active HoT. Estimates change with recent ticks and disappear if the game hides the required data.")
-            page.dots = Checkbox("PeriodicDamage", "Estimate damage over time", 4, -104, "root", "periodicDamage",
+            page.dots = Switch("PeriodicDamage", "Estimate damage over time", 12, forecasts - 66, "root", "periodicDamage",
                 "A muted red overlay estimates the next 5 seconds after observing at least two ticks of an active DoT. This is an estimate, not guaranteed damage.")
-            page.periodicNote = UI.Label(content, "", 12, -144, "GameFontDisableSmall", 580)
-            UI.Section(content, "Paladin seal", -212)
-            page.seal = Checkbox("SealEnabled", "Show active seal and missing-seal reminder", 4, -248, "seal", "enabled",
-                "Paladins only. Shows your active seal. When it ends, its last icon turns grey with a reminder. Drag the icon separately in Move mode. A question mark means the game withheld its aura status.")
-            page.sealInputs = {}
-            local function ApplySeal()
-                local values = {}
-                for field, input in pairs(page.sealInputs) do
-                    values[field] = tonumber(input:GetText())
-                    if not values[field] then Notice("Enter valid seal dimensions and offsets.", true); return end
+            if Addon:IsPaladin() then
+                UI.Section(content, "Paladin seal", -368)
+                page.seal = Switch("SealEnabled", "Show seal reminder", 12, -398, "seal", "enabled",
+                    "Paladins only. Shows your active seal. When it ends, its last icon turns grey with a reminder. Drag the icon separately in Move mode. A question mark means the game withheld its aura status.")
+                page.sealLinked = Switch("SealLinked", "Follow personal bars", 314, -398, "seal", "linked")
+                display:SetHeight(442)
+                UI.Section(layout, "Seal position and size", -304)
+                page.sealInputs = {}
+                local fields = { { "size", "Size", 12, 76, 8, 256 }, { "x", "X", 204, 232, -32768, 32768 },
+                    { "y", "Y", 364, 392, -32768, 32768 } }
+                for _, field in ipairs(fields) do
+                    local setting, label, labelX, x, low, high = unpack(field)
+                    UI.Label(layout, label, labelX, -344)
+                    local input = CreateFrame("EditBox", prefix .. "Seal" .. setting, layout, "InputBoxTemplate")
+                    input:SetSize(72, 24)
+                    input:SetPoint("TOPLEFT", x, -338)
+                    input:SetAutoFocus(false)
+                    input:SetMaxLetters(10)
+                    local function Current() return Addon:GetResourceSettings().seal[setting] end
+                    local function Apply(value)
+                        if not value then return false end
+                        return Addon:SetResourceDimensions("seal", { [setting] = value })
+                    end
+                    input:SetScript("OnEscapePressed", function(self) self:SetText(tostring(Current())); self:ClearFocus() end)
+                    input:SetScript("OnEnterPressed", function(self)
+                        if not Apply(tonumber(self:GetText())) then
+                            Notice(string.format("Enter a value from %d to %d.", low, high), true)
+                        end
+                        self:SetText(tostring(Current()))
+                        self:ClearFocus()
+                    end)
+                    UI.NumberArrows(input, 1, low, high, Current, Apply)
+                    page.sealInputs[setting] = input
                 end
-                if not Addon:SetResourceDimensions("seal", values) then Notice("Icon size: 8-256. Offsets: -32768 to 32768.", true); return end
-                for _, input in pairs(page.sealInputs) do input:ClearFocus() end
-                Addon:RefreshResourceOptions(true)
-                Notice("Seal layout saved.")
+            else
+                display:SetHeight(356)
             end
-            local function SealInput(field, x, y)
-                local input = CreateFrame("EditBox", prefix .. "Seal" .. field, content, "InputBoxTemplate")
-                input:SetSize(80, 24)
-                input:SetPoint("TOPLEFT", x, y)
-                input:SetAutoFocus(false)
-                input:SetMaxLetters(12)
-                input:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-                input:SetScript("OnEnterPressed", ApplySeal)
-                UI.NumberArrows(input, 1, field == "size" and 8 or -32768, field == "size" and 256 or 32768,
-                    function() return Addon:GetResourceSettings().seal[field] end,
-                    function(value) return Addon:SetResourceDimensions("seal", { [field] = value }) end)
-                page.sealInputs[field] = input
-            end
-            UI.Label(content, "Icon size", 12, -300)
-            SealInput("size", 148, -294)
-            UI.Label(content, "Horizontal", 312, -300)
-            SealInput("x", 444, -294)
-            UI.Label(content, "Vertical", 12, -342)
-            SealInput("y", 148, -336)
-            UI.Button(content, prefix .. "SealApply", "Apply seal layout", 432, -336, 144, ApplySeal)
-            UI.Label(content, "Icon centres beside both bars. Offsets move it from there. Hold an arrow to fine-tune.", 12, -376, "GameFontDisableSmall", 580)
-        else
-            UI.Label(content, scope == "pet" and "Preview includes a sample pet. Power follows your pet's active resource."
-                or "Preview includes sample party members, so you can set up while solo.", 12, 0, "GameFontDisableSmall", 580)
         end
+        UI.Tabs(page, { { "display", "Display", display }, { "layout", "Layout", layout },
+            { "appearance", "Appearance", appearancePanel } })
         page:SetScript("OnShow", function()
             Addon.currentOptionsPage = key
             Addon:OptionsFeedback("", false, key)
