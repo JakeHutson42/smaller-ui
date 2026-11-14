@@ -202,8 +202,8 @@ function Addon:RefreshOptions(syncInput)
         row.keep:SetChecked(self.db.elements[key] ~= nil)
         if syncInput == true then row.input:SetText(string.format("%.2f", self.db.elements[key] or 1)) end
     end
-    self:RefreshReadyOptions()
     self:RefreshResourceOptions(syncInput == true)
+    self:RefreshSwingOptions()
 end
 
 function Addon:CreateOptions()
@@ -296,7 +296,7 @@ function Addon:CreateOptions()
         Addon:UpdateMinimap()
     end, "Click the minimap button to open this page. Drag it around the minimap to reposition it.")
     UI.Button(content, "SmallerUIResetButton", "Restore game scale", 12, -622, 190, function() Addon:Reset() end)
-    UI.Label(content, "/sui reset also restores the game's scale and reloads the UI.", 12, -658, "GameFontDisableSmall")
+    UI.Label(content, "/fqol reset also restores the game's scale and reloads the UI.", 12, -658, "GameFontDisableSmall")
     page:SetScript("OnShow", function()
         Addon.currentOptionsPage = "scaling"
         Addon:OptionsFeedback("", false, "scaling")
@@ -306,20 +306,19 @@ function Addon:CreateOptions()
         control.input:ClearFocus()
         for _, row in pairs(page.rows) do row.input:ClearFocus() end
     end)
-    local ready = self:BuildReadyOptions()
-    pages.cooldowns = ready
     local resources, party, pet = self:BuildResourceOptions()
     pages.resources, pages.party, pages.pet = resources, party, pet
+    pages.swing = self:BuildSwingOptions()
     local group = CreateFrame("Frame", "SmallerUIOptionsGroup")
     group:Hide()
     group:SetScript("OnShow", function() Addon:QueueScalingCategory() end)
-    self.settingsCategory = Settings.RegisterCanvasLayoutCategory(group, "Smaller UI")
+    self.settingsCategory = Settings.RegisterCanvasLayoutCategory(group, self.displayName)
     self.settingsCategory:SetShouldSortAlphabetically(false)
     self.scaleSettingsCategory = Settings.RegisterCanvasLayoutSubcategory(self.settingsCategory, page, "UI scaling")
-    self.resourceSettingsCategory = Settings.RegisterCanvasLayoutSubcategory(self.settingsCategory, resources, "Personal resources")
-    self.partySettingsCategory = Settings.RegisterCanvasLayoutSubcategory(self.settingsCategory, party, "Party display")
-    self.petSettingsCategory = Settings.RegisterCanvasLayoutSubcategory(self.settingsCategory, pet, "Pet display")
-    self.readySettingsCategory = Settings.RegisterCanvasLayoutSubcategory(self.settingsCategory, ready, "Cooldown flashes")
+    self.resourceSettingsCategory = Settings.RegisterCanvasLayoutSubcategory(self.settingsCategory, resources, "Personal bars")
+    self.partySettingsCategory = Settings.RegisterCanvasLayoutSubcategory(self.settingsCategory, party, "Party bars")
+    self.petSettingsCategory = Settings.RegisterCanvasLayoutSubcategory(self.settingsCategory, pet, "Pet bars")
+    self.swingSettingsCategory = Settings.RegisterCanvasLayoutSubcategory(self.settingsCategory, pages.swing, "Swing timer")
     Settings.RegisterAddOnCategory(self.settingsCategory)
     local expanded = self.settingsCategory:IsExpanded()
     SettingsPanel:GetCategoryList():RegisterCallback(SettingsCategoryListMixin.Event.OnCategoriesUpdated, function()
@@ -333,18 +332,19 @@ function Addon:CreateOptions()
 end
 
 function Addon:ShowOptions(key)
-    if key ~= "cooldowns" and key ~= "resources" and key ~= "party" and key ~= "pet" then key = "scaling" end
+    if key ~= "resources" and key ~= "party" and key ~= "pet" and key ~= "swing" then key = "scaling" end
     if InCombatLockdown() then
         self.pendingOptionsPage = key
         self:Print("Settings will open after combat.")
         return false
     end
     if not self:CreateOptions() then
-        self:Print("WoW's addon settings are not available yet. Try /sui again after loading.")
+        self:Print("WoW's addon settings are not available yet. Try /fqol again after loading.")
         return false
     end
-    local categories = { scaling = self.scaleSettingsCategory, cooldowns = self.readySettingsCategory,
-        resources = self.resourceSettingsCategory, party = self.partySettingsCategory, pet = self.petSettingsCategory }
+    local categories = { scaling = self.scaleSettingsCategory,
+        resources = self.resourceSettingsCategory, party = self.partySettingsCategory, pet = self.petSettingsCategory,
+        swing = self.swingSettingsCategory }
     local category = categories[key]
     self.currentOptionsPage = key
     self.openingOptionsPage = true
@@ -352,8 +352,6 @@ function Addon:ShowOptions(key)
     self.openingOptionsPage = nil
     return true
 end
-
-function Addon:SelectOptionsPage(key) return self:ShowOptions(key) end
 
 function Addon:OpenPendingOptions()
     if self.pendingOptionsPage and not InCombatLockdown() then

@@ -3,7 +3,7 @@ local driver = CreateFrame("Frame")
 -- Seed localized names for every seal family; ranks share their family's name.
 local seals = { 20154, 21084, 21082, 20163, 20375, 20164, 20165, 20166, 31801, 53736, 31892, 53720 }
 local sealIDs, names = {}, {}
-local icon, dragging, pendingSeal
+local icon, dragging, pendingSeal, knownSeal
 local function Public(value) return not issecretvalue or not issecretvalue(value) end
 local function Number(value)
     return Public(value) and type(value) == "number" and value == value and math.abs(value) < math.huge
@@ -109,30 +109,67 @@ function Addon:CreateSealIndicator(view)
     RefreshNames()
 end
 
+local function FindActiveSeal(preferredSpell)
+    if not C_UnitAuras then return nil, true end
+    local active, unknown
+    local getAura = C_UnitAuras.GetAuraDataByIndex
+    if getAura then
+        for index = 1, 100 do
+            local ok, aura = pcall(getAura, "player", index, "HELPFUL")
+            if not ok or not Public(aura) then unknown = true; break end
+            if not aura then break end
+            if IsSeal(aura.spellId, aura.name) then
+                if Number(aura.spellId) and aura.spellId == preferredSpell then return aura end
+                active = active or aura
+            elseif not Public(aura.spellId) or not Public(aura.name) then
+                unknown = true
+            end
+        end
+    else unknown = true end
+
+    -- The exact lookup can still find a readable seal if another buff blocked the scan.
+    if unknown and preferredSpell > 0 and C_UnitAuras.GetPlayerAuraBySpellID then
+        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, preferredSpell)
+        if ok and Public(aura) and aura then return aura end
+    end
+    if active and (not unknown or not knownSeal or knownSeal.spellId ~= preferredSpell) then return active end
+
+    -- A public instance ID can still confirm that a previously identified
+    -- seal is present when its spell ID and name become secret in combat.
+    if knownSeal and C_UnitAuras.GetUnitAuraInstanceIDs then
+        local ok, instances = pcall(C_UnitAuras.GetUnitAuraInstanceIDs, "player", "HELPFUL")
+        if ok and Public(instances) and instances then
+            for _, instance in ipairs(instances) do
+                if Number(instance) and instance == knownSeal.auraInstanceID then return knownSeal end
+            end
+            knownSeal = nil
+        end
+    end
+    if not unknown then knownSeal = nil end
+    return active, unknown
+end
+
 function Addon:UpdateSealIndicator()
     if not icon then return end
     local cfg = self:GetResourceSettings()
     local editing = self:IsEditingResources()
     icon:SetShown(self:IsPaladin() and cfg.seal.enabled and (cfg.enabled or editing))
     if not icon:IsShown() then return end
-    local active, unknown
-    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-        for index = 1, 100 do
-            local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, "player", index, "HELPFUL")
-            if not ok or not Public(aura) then unknown = true; break end
-            if not aura then break end
-            if IsSeal(aura.spellId, aura.name) then
-                active = active or aura
-                if Number(aura.spellId) and aura.spellId == cfg.seal.lastSpellID then active = aura; break end
-            elseif not Public(aura.spellId) or not Public(aura.name) then unknown = true end
-        end
-    else unknown = true end
+    local active, unknown = FindActiveSeal(cfg.seal.lastSpellID)
+    local observed = active and active ~= knownSeal
+    if observed then
+        knownSeal = Number(active.auraInstanceID) and {
+            auraInstanceID = active.auraInstanceID,
+            spellId = Number(active.spellId) and active.spellId or nil,
+            icon = Public(active.icon) and active.icon or nil,
+        } or nil
+    end
     -- Spellcast success can precede UNIT_AURA. An old aura must not overwrite
     -- the newly cast seal's reminder while the aura list catches up.
     local spell = cfg.seal.lastSpellID
     if active and Number(active.spellId) then
         spell = active.spellId
-        if not pendingSeal or spell == pendingSeal then cfg.seal.lastSpellID = spell end
+        if observed and (not pendingSeal or spell == pendingSeal) then cfg.seal.lastSpellID = spell end
     end
     local info = Number(spell) and spell > 0 and Info(spell) or Info(20154)
     local texture = info and info.iconID or "Interface\\Icons\\INV_Misc_QuestionMark"
@@ -162,10 +199,13 @@ local function RecheckAfterCast(spell)
     end)
 end
 
-for _, event in ipairs({ "UNIT_AURA", "UNIT_SPELLCAST_SUCCEEDED", "PLAYER_ENTERING_WORLD", "SPELLS_CHANGED", "PLAYER_ALIVE", "PLAYER_DEAD" }) do driver:RegisterEvent(event) end
-driver:SetScript("OnEvent", function(_, event, unit, _, spell)
+driver:RegisterUnitEvent("UNIT_AURA", "player")
+driver:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "SPELLS_CHANGED", "PLAYER_ALIVE", "PLAYER_DEAD",
+    "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED" }) do driver:RegisterEvent(event) end
+driver:SetScript("OnEvent", function(_, event, _, _, spell)
     if not Addon.character or not Addon.character.resources then return end
-    if event:sub(1, 5) == "UNIT_" and (not Public(unit) or unit ~= "player") then return end
+    if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_DEAD" then knownSeal = nil end
     if event == "SPELLS_CHANGED" or event == "PLAYER_ENTERING_WORLD" then RefreshNames() end
     if event == "UNIT_SPELLCAST_SUCCEEDED" and Addon:IsPaladin() then
         if IsSeal(spell) then

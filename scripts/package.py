@@ -11,7 +11,7 @@ version = re.search(r"^## Version: (.+)$", text, re.MULTILINE).group(1).strip()
 files = [manifest, *(addon / line.strip() for line in text.splitlines()
                      if line.strip() and not line.lstrip().startswith("#"))]
 files.extend((addon / "Media").glob("*.tga"))
-destination = root / "downloads" / f"SmallerUI-{version}.zip"
+destination = root / "downloads" / f"ForeverQoL-{version}.zip"
 destination.parent.mkdir(exist_ok=True)
 with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
     for file in sorted(files):

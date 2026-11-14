@@ -2,10 +2,11 @@ local addonName, Addon = ...
 local frame = CreateFrame("Frame")
 local loggedIn, resetPending = false, false
 local globalModified = false
+Addon.displayName = "Forever QoL"
 Addon.MIN_SCALE, Addon.MAX_SCALE = 0.10, 1.50
 
 function Addon:Print(message)
-    DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffSmaller UI:|r " .. message)
+    DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff" .. self.displayName .. ":|r " .. message)
 end
 
 function Addon:IsValidScale(value)
@@ -119,12 +120,12 @@ local function HandleCommand(message)
             UIParent:GetScale(), Addon.db.enabled and string.format("%.3f", Addon.db.scale) or "off"))
         if resetPending then Addon:Print("Reset and UI reload are waiting for combat to end.") end
     else
-        Addon:Print("/sui - open settings. /sui 0.50 - set scale (0.10 to 1.50).")
-        Addon:Print("/sui smaller, /sui larger, /sui status, /sui reset (restore and reload).")
+        Addon:Print("/fqol - open settings. /fqol 0.50 - set scale (0.10 to 1.50).")
+        Addon:Print("/fqol smaller, /fqol larger, /fqol status, /fqol reset (restore and reload).")
     end
 end
 
-SLASH_SMALLERUI1, SLASH_SMALLERUI2 = "/sui", "/smallerui"
+SLASH_SMALLERUI1, SLASH_SMALLERUI2, SLASH_SMALLERUI3 = "/sui", "/smallerui", "/fqol"
 SlashCmdList.SMALLERUI = HandleCommand
 for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD",
     "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED", "DISPLAY_SIZE_CHANGED",
@@ -144,8 +145,12 @@ frame:SetScript("OnEvent", function(_, event, name, action)
     elseif event == "ADDON_LOADED" and name == addonName and not Addon.db then
         local firstLoad = SmallerUIDB == nil
         if type(SmallerUIDB) ~= "table" then SmallerUIDB = {} end
+        if type(SmallerUICharDB) ~= "table" then SmallerUICharDB = {} end
         Addon.db = SmallerUIDB
+        Addon.character = SmallerUICharDB
         local db = Addon.db
+        db.readyFlash = nil
+        Addon.character.readySlots = nil
         if not Addon:IsValidScale(db.scale) then
             db.scale, db.enabled = 0.50, false
         else
@@ -153,11 +158,10 @@ frame:SetScript("OnEvent", function(_, event, name, action)
         end
         Addon:ValidateElements()
         Addon:ValidateMinimap()
-        Addon:ValidateReadyFlash()
         Addon:ValidateResources()
         if Addon.lastBlockedAction then Addon.character.lastBlockedAction = Addon.lastBlockedAction end
         if firstLoad then
-            Addon:Print("Ready. Type /sui for settings; /sui reset restores the game's scale.")
+            Addon:Print("Ready. Type /fqol for settings. /fqol reset restores the game's scale.")
         end
     elseif event == "PLAYER_LOGIN" then
         loggedIn = true
@@ -166,7 +170,6 @@ frame:SetScript("OnEvent", function(_, event, name, action)
         Addon:ApplyResources()
         Addon:UpdateMinimap()
         Addon:CreateOptions()
-        Addon:RefreshReadyTracking()
         ScheduleApply()
     elseif loggedIn and Addon.db then
         ScheduleApply() -- Includes late-loaded frames and new chat windows.

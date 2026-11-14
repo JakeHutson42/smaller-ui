@@ -25,8 +25,10 @@ local function Defaults()
     return {
         enabled = false, partyEnabled = false, petEnabled = false, hideBlizzard = true, smooth = true,
         incomingHeals = true, periodicHeals = true, periodicDamage = false,
+        swing = Addon:DefaultSwingSettings(),
         seal = { enabled = true, x = 8, y = 0, size = 32, lastSpellID = 0 },
         player = { x = 0, y = -150, scale = 1, linked = true, gap = 4, values = true, colours = DefaultColours(), style = Addon:DefaultResourceStyle(),
+            curved = false, arc = { x = 0, y = -12, scale = 1, width = 42, height = 216, gap = 214 },
             health = { width = 240, height = 22, x = 0, y = 0 },
             power = { width = 240, height = 12, x = 0, y = 0 } },
         party = { x = -420, y = 140, scale = 1, linked = true, gap = 3, spacing = 14, names = true, portraits = true, values = true, colours = DefaultColours(), style = Addon:DefaultResourceStyle(),
@@ -41,6 +43,7 @@ end
 local limits = { width = { 8, 8192 }, height = { 2, 1024 }, x = { -32768, 32768 },
     y = { -32768, 32768 }, scale = { 0.1, 5 }, gap = { 0, 200 }, spacing = { 0, 200 },
     size = { 8, 256 }, lastSpellID = { 0, 10000000 }, r = { 0, 1 }, g = { 0, 1 }, b = { 0, 1 } }
+Addon.resourceArcLimits = { width = { 20, 120 }, height = { 80, 640 }, gap = { 80, 1000 }, scale = { 0.25, 3 } }
 
 local function Validate(value, defaults)
     if type(value) ~= "table" then value = {} end
@@ -60,7 +63,10 @@ end
 
 function Addon:ValidateResources()
     self.character.resources = Validate(self.character.resources, Defaults())
+    local arc = self.character.resources.player.arc
+    for key, range in pairs(self.resourceArcLimits) do arc[key] = Clamp(arc[key], range[1], range[2]) end
     self:ValidateResourceStyles()
+    self:ValidateSwingSettings()
     self.character.resources.seal.lastSpellID = math.floor(self.character.resources.seal.lastSpellID)
     local original = self.character.originalSelfResourceCVar
     if original ~= "0" and original ~= "1" then self.character.originalSelfResourceCVar = nil end
@@ -85,15 +91,30 @@ function Addon:GetResourceColour(scope, kind, token)
     return color.r, color.g, color.b
 end
 
+local function ColourBar(bar, colour, tintTrail)
+    local r, g, b = colour.r, colour.g, colour.b
+    if bar.red == r and bar.green == g and bar.blue == b and bar.tintTrail == tintTrail then return false end
+    bar.red, bar.green, bar.blue, bar.tintTrail = r, g, b, tintTrail
+    bar.fill:SetStatusBarColor(r, g, b)
+    if tintTrail then
+        bar.trail:SetStatusBarColor(r * 0.6 + 0.28, g * 0.6 + 0.28, b * 0.6 + 0.28, 0.56)
+    else
+        bar.trail:SetStatusBarColor(0.32, 0.37, 0.4, 0.35)
+    end
+    return true
+end
+
 local function ColourView(view)
-    local colours = Addon:GetResourceSettings()[view.scope].colours
+    local settings = Addon:GetResourceSettings()[view.scope]
+    local colours = settings.colours
     local health = colours.health
     local power = colours.powerByType and (colours.powerOverrides[view.powerToken] or view.defaultPowerColour) or colours.power
     power = power or colours.power
-    view.health.fill:SetStatusBarColor(health.r, health.g, health.b)
-    view.power.fill:SetStatusBarColor(power.r, power.g, power.b)
+    local motion = Addon.resourceMotion[settings.style.motion]
+    ColourBar(view.power, power, motion.tintTrail)
+    local changed = ColourBar(view.health, health, motion.tintTrail)
     local forecasts = view.health.forecasts
-    if forecasts then
+    if changed and forecasts then
         forecasts.direct:SetStatusBarColor(health.r + (1 - health.r) * 0.35, health.g + (1 - health.g) * 0.35, health.b + (1 - health.b) * 0.35, 0.95)
         forecasts.hot:SetStatusBarColor(health.r + (1 - health.r) * 0.55, health.g + (1 - health.g) * 0.55, health.b + (1 - health.b) * 0.55, 0.6)
     end
@@ -144,9 +165,39 @@ function Addon:ResetResourceColours(scope)
     if not settings or not settings.colours then return false end
     settings.colours = DefaultColours()
     local defaults = self:DefaultResourceStyle()
-    settings.style.textColour, settings.style.borderColour = defaults.textColour, defaults.borderColour
+    for key in pairs(self.resourceStyleColours) do settings.style[key] = defaults[key] end
     self:RefreshResourceStyles()
-    self:RefreshResourceColours()
+    return true
+end
+
+local function RGB(hex)
+    return { r = math.floor(hex / 65536) / 255, g = math.floor(hex / 256) % 256 / 255, b = hex % 256 / 255 }
+end
+
+function Addon:ApplyResourceTheme(scope, id)
+    local settings = self:GetResourceSettings()[scope]
+    local theme = Number(id) and self.resourceThemes[id]
+    if not settings or not settings.style or not theme then return false end
+    local style = settings.style
+    local defaults = self:DefaultResourceStyle()
+    style.theme = id
+    style.barTexture = theme.texture or defaults.barTexture
+    style.trim = theme.trim or defaults.trim
+    if style.themeColours then
+        local colours = DefaultColours()
+        style.accentColour, style.trackColour, style.borderColour = defaults.accentColour, defaults.trackColour, defaults.borderColour
+        settings.colours.health, settings.colours.power = colours.health, colours.power
+        settings.colours.powerByType = colours.powerByType
+        if theme.accent then
+            local accent = RGB(theme.accent)
+            style.accentColour = accent
+            style.trackColour = { r = 0.025 + accent.r * 0.055, g = 0.025 + accent.g * 0.055, b = 0.032 + accent.b * 0.055 }
+            style.borderColour = { r = 0.05 + accent.r * 0.26, g = 0.05 + accent.g * 0.26, b = 0.05 + accent.b * 0.26 }
+            settings.colours.health, settings.colours.power = RGB(theme.health), RGB(theme.power)
+            settings.colours.powerByType = false
+        end
+    end
+    self:RefreshResourceStyles()
     return true
 end
 
@@ -181,10 +232,20 @@ local function NativeValue(bar, value, smooth)
     end
 end
 
+local function ResetBarFeedback(bar)
+    NativeValue(bar.trail, bar.currentValue, false)
+    bar.pendingAt, bar.pendingValue, bar.pulseAt = nil, nil, nil
+    bar.pulse:Hide()
+end
+
 local function GroupPosition(frame, settings)
     frame:SetScale(settings.scale)
     frame:ClearAllPoints()
     frame:SetPoint("CENTER", UIParent, "CENTER", settings.x / settings.scale, settings.y / settings.scale)
+end
+
+local function RoundToPixel(value, pixel)
+    return math.floor(value / pixel + 0.5) * pixel
 end
 
 local function LayoutBar(bar, settings, view, left, top, showValues)
@@ -196,16 +257,19 @@ local function LayoutBar(bar, settings, view, left, top, showValues)
         for _, piece in ipairs({ "TopLeftCorner", "TopRightCorner", "BottomLeftCorner", "BottomRightCorner",
             "TopEdge", "BottomEdge", "LeftEdge", "RightEdge", "Center" }) do
             local region = bar[piece]
-            if region and region.SetRoundLayoutToNearestPixel then region:SetRoundLayoutToNearestPixel(true) end
+            if region then
+                if region.SetRoundLayoutToNearestPixel then region:SetRoundLayoutToNearestPixel(false) end
+                if region.SetTexelSnappingBias then region:SetTexelSnappingBias(0) end
+                if region.SetSnapToPixelGrid then region:SetSnapToPixelGrid(false) end
+            end
         end
     end
     local inset = (editor or Addon:GetResourceSettings()[view.scope].style.border) and pixel or 0
     bar.trail:ClearAllPoints()
     bar.trail:SetPoint("TOPLEFT", inset, -inset)
     bar.trail:SetPoint("BOTTOMRIGHT", -inset, inset)
-    local minimum = inset > 0 and 3 or 1 -- Leave at least one pixel for the live fill.
-    local function Size(value) return math.max(minimum, math.floor(value / pixel + 0.5)) * pixel end
-    bar:SetSize(Size(settings.width), Size(settings.height))
+    local minimum = inset > 0 and 3 * pixel or pixel -- Leave at least one pixel for the live fill.
+    bar:SetSize(math.max(minimum, RoundToPixel(settings.width, pixel)), math.max(minimum, RoundToPixel(settings.height, pixel)))
     bar:ClearAllPoints()
     bar:SetPoint("TOPLEFT", view, "TOPLEFT", left + settings.x, top + settings.y)
     bar.valueText:SetWidth(math.max(1, settings.width - 12))
@@ -234,22 +298,41 @@ local function LayoutView(view, settings, party)
     view.portrait:SetSize(math.max(1, portraitSize), math.max(1, portraitSize))
     LayoutBar(view.health, settings.health, view, left, -nameHeight, settings.values)
     LayoutBar(view.power, settings.power, view, left, -nameHeight - settings.health.height - settings.gap, settings.values)
-    if settings.linked and settings.health.width == settings.power.width then
-        -- Share both horizontal edges, including at fractional display scales.
-        -- Independent bar sizes/positions still use their own saved geometry.
+    if view.power.SetRoundLayoutToNearestPixel then view.power:SetRoundLayoutToNearestPixel(not settings.linked) end
+    if settings.linked then
+        -- Only health snaps to the screen. Both bars use whole-pixel sizes and
+        -- the same origin, including their fills and borders.
+        local pixel = view.health.pixel
+        local x = settings.health.width == settings.power.width and 0 or settings.power.x - settings.health.x
+        local y = settings.power.y - settings.health.y - settings.gap
         view.power:ClearAllPoints()
-        local top = -settings.gap + settings.power.y - settings.health.y
-        view.power:SetPoint("TOPLEFT", view.health, "BOTTOMLEFT", 0, top)
-        view.power:SetPoint("TOPRIGHT", view.health, "BOTTOMRIGHT", 0, top)
-        -- Use the same inner left edge too, rather than resolving two inset
-        -- rectangles separately. Texture snapping must not shift that edge.
-        local inset = (editor or settings.style.border) and view.health.pixel or 0
-        view.power.trail:ClearAllPoints()
-        view.power.trail:SetPoint("TOPLEFT", view.health.trail, "BOTTOMLEFT", 0, top - 2 * inset)
-        view.power.trail:SetPoint("BOTTOMRIGHT", view.power, "BOTTOMRIGHT", -inset, inset)
+        view.power:SetPoint("TOPLEFT", view.health, "BOTTOMLEFT", RoundToPixel(x, pixel), RoundToPixel(y, pixel))
     end
     Addon:LayoutResourcePredictions(view.health)
     view.power:SetShown(showPower)
+end
+
+local function LayoutCurvedView(view, settings)
+    local arc = settings.arc
+    GroupPosition(view, arc)
+    view:SetSize(arc.gap + 2 * arc.width, arc.height)
+    view.name:Hide()
+    view.portrait:Hide()
+    for _, kind in ipairs({ "health", "power" }) do
+        local bar = view[kind]
+        Addon:SetResourceBarCurved(bar, true)
+        local side = kind == "health" and "LEFT" or "RIGHT"
+        if bar.SetRoundLayoutToNearestPixel then bar:SetRoundLayoutToNearestPixel(true) end
+        bar:SetSize(arc.width, arc.height)
+        bar:ClearAllPoints()
+        bar:SetPoint(side, view, side)
+        bar.trail:SetAllPoints(bar)
+        bar:EnableMouse(editor ~= nil)
+        bar.grip:Hide()
+        Addon:StyleResourceBar(bar, settings, editor ~= nil)
+    end
+    Addon:LayoutResourcePredictions(view.health)
+    view.power:SetShown(view.hasPower ~= false or editor ~= nil)
 end
 
 function Addon:RefreshResourceStyles()
@@ -257,9 +340,14 @@ function Addon:RefreshResourceStyles()
         Layout()
         local views = { display.player, display.pet, unpack(display.party) }
         for _, view in ipairs(views) do
+            ColourView(view)
             for _, kind in ipairs({ "health", "power" }) do
                 local bar = view[kind]
-                if bar.initialized then self:RenderResourceText(bar, bar.currentValue, bar.currentMaximum, bar.currentDemo) end
+                if bar.initialized then
+                    local motion = self:GetResourceSettings()[view.scope].style.motion
+                    if motion ~= bar.motion then ResetBarFeedback(bar); bar.motion = motion end
+                    self:RenderResourceText(bar, bar.currentValue, bar.currentMaximum, bar.currentDemo)
+                end
             end
         end
     end
@@ -269,8 +357,14 @@ end
 Layout = function()
     if not display then return end
     local cfg = Addon:GetResourceSettings()
-    GroupPosition(display.player, cfg.player)
-    LayoutView(display.player, cfg.player, false)
+    if cfg.player.curved then
+        LayoutCurvedView(display.player, cfg.player)
+    else
+        Addon:SetResourceBarCurved(display.player.health, false)
+        Addon:SetResourceBarCurved(display.player.power, false)
+        GroupPosition(display.player, cfg.player)
+        LayoutView(display.player, cfg.player, false)
+    end
     Addon:LayoutSealIndicator(display.player, editor ~= nil)
     GroupPosition(display.pet, cfg.pet)
     LayoutView(display.pet, cfg.pet, true)
@@ -288,6 +382,8 @@ end
 
 local function UpdateBar(bar, value, maximum, snap, demo)
     local cfg = Addon:GetResourceSettings()
+    bar.motion = cfg[bar.view.scope].style.motion
+    local motion = Addon.resourceMotion[bar.motion]
     if Public(maximum) and (not Number(maximum) or maximum <= 0) then maximum = 1 end
     bar.fill:SetMinMaxValues(0, maximum)
     -- The live fill and number always use the latest API value immediately.
@@ -296,24 +392,35 @@ local function UpdateBar(bar, value, maximum, snap, demo)
     bar.currentValue, bar.currentMaximum, bar.currentDemo = value, maximum, demo
     Addon:RenderResourceText(bar, value, maximum, demo)
     bar.trail:SetMinMaxValues(0, maximum)
-    if snap or not bar.initialized or not cfg.smooth then
+    if snap or not bar.initialized or motion.hold == 0 then
+        ResetBarFeedback(bar)
+    elseif not cfg.smooth then
         NativeValue(bar.trail, value, false)
         bar.pendingAt, bar.pendingValue = nil, nil
-        if snap then bar.pulse:Hide(); bar.pulseAt = nil end
-    else
+    elseif not Number(value) or value ~= bar.lastPublic then
         bar.pendingValue = value
-        if not bar.pendingAt then bar.pendingAt = GetTime() + 0.12 end
+        if not bar.pendingAt then bar.pendingAt = GetTime() + motion.hold end
         driver:SetScript("OnUpdate", Tick)
     end
     -- Only public values are compared for decorative damage/heal feedback.
     -- Restricted health/power values go directly to native rendering APIs.
-    if bar.resourceKind == "health" and Number(value) and Number(bar.lastPublic) and not snap and value ~= bar.lastPublic then
-        local healed = value > bar.lastPublic
-        bar.pulse:SetColorTexture(healed and 0.35 or 1, healed and 1 or 0.3, 0.3, 0.22)
-        bar.pulse:Show()
-        bar.pulse:SetAlpha(1)
-        bar.pulseAt = GetTime()
-        driver:SetScript("OnUpdate", Tick)
+    if motion.fade and not snap and Number(value) and Number(bar.lastPublic) and value ~= bar.lastPublic then
+        local change = value - bar.lastPublic
+        local isHealth = bar.resourceKind == "health"
+        if isHealth or motion.powerPulse and Number(maximum) and change <= -maximum * 0.05 then
+            local healed = change > 0
+            local opacity = motion.opacity
+            if motion.tintTrail and Number(maximum) then opacity = opacity * Clamp(math.abs(change) / maximum * 3, 0.4, 1) end
+            if isHealth then
+                bar.pulse:SetColorTexture(healed and 0.35 or 1, healed and 1 or 0.3, 0.3, opacity)
+            else
+                bar.pulse:SetColorTexture(1, 1, 1, opacity * 0.7)
+            end
+            bar.pulse:Show()
+            bar.pulse:SetAlpha(1)
+            bar.pulseAt = GetTime()
+            driver:SetScript("OnUpdate", Tick)
+        end
     end
     if Public(value) then bar.lastPublic = value else bar.lastPublic = nil end
     bar.initialized = true
@@ -435,16 +542,22 @@ local function SaveGroup(frame, settings)
     settings.y = y * frame:GetEffectiveScale() - centerY * UIParent:GetEffectiveScale()
 end
 
+local function DragTarget(view, kind, settings)
+    local linked = view.health.curved or settings.linked
+    return linked and (view.scope == "party" and display.partyRoot or view) or view[kind], linked
+end
+
 function Addon:BeginResourceDrag(view, kind)
     if not editor or InCombatLockdown() then return end
     if editor.drag or self:GetResourceMoveState() then return end
     editor.resize = nil
     local scope = view.scope
     local settings = self:GetResourceSettings()[scope]
-    local target = settings.linked and (scope == "party" and display.partyRoot or display[scope]) or view[kind]
-    editor.drag = { target = target, view = view, kind = kind, scope = scope, linked = settings.linked }
-    local name = scope == "player" and "Personal resources" or scope == "pet" and "Pet display" or "Party display"
-    if not self:StartResourceMove(target, view[kind], scope, name .. (settings.linked and " - linked bars" or " - " .. kind), kind, settings.linked) then
+    local target, linked = DragTarget(view, kind, settings)
+    editor.drag = { target = target, view = view, kind = kind, scope = scope, linked = linked }
+    local name = scope == "player" and "Personal bars" or scope == "pet" and "Pet bars" or "Party bars"
+    local suffix = view.health.curved and " - curved HUD" or linked and " - linked bars" or " - " .. kind
+    if not self:StartResourceMove(target, view[kind], scope, name .. suffix, kind, linked) then
         editor.drag = nil
     end
 end
@@ -455,7 +568,7 @@ function Addon:EndResourceDrag()
     self:FinishResourceMove()
     local settings = self:GetResourceSettings()[drag.scope]
     if drag.linked then
-        SaveGroup(drag.target, settings)
+        SaveGroup(drag.target, drag.view.health.curved and settings.arc or settings)
     else
         drag.target:StopMovingOrSizing()
         local left, bottom, _, height = drag.target:GetRect()
@@ -472,12 +585,12 @@ function Addon:EndResourceDrag()
 end
 
 function Addon:BeginResourceResize(view, kind)
-    if not editor or InCombatLockdown() then return end
+    if not editor or InCombatLockdown() or view.health.curved then return end
     if self:GetResourceMoveState() then return end
     local scope = view.scope
     local settings = self:GetResourceSettings()[scope]
     local target = settings.linked and (scope == "party" and display.partyRoot or display[scope]) or view[kind]
-    self:SelectResourceMoveTarget(target, (scope == "player" and "Personal resources" or scope == "pet" and "Pet display" or "Party display") .. " - resize " .. kind)
+    self:SelectResourceMoveTarget(target, (scope == "player" and "Personal bars" or scope == "pet" and "Pet bars" or "Party bars") .. " - resize " .. kind)
     local x, y = GetCursorPosition()
     local left, bottom, _, height = view[kind]:GetRect()
     local scale = view:GetEffectiveScale()
@@ -517,18 +630,19 @@ local function CreateBar(view, kind)
     bar:SetScript("OnMouseDown", function(_, button)
         if button ~= "LeftButton" or not editor then return end
         local settings = Addon:GetResourceSettings()[view.scope]
-        local target = settings.linked and (view.scope == "party" and display.partyRoot or display[view.scope]) or bar
-        Addon:SelectResourceMoveTarget(target, (view.scope == "player" and "Personal resources" or view.scope == "pet" and "Pet display" or "Party display") .. (settings.linked and " - linked bars" or " - " .. kind))
+        local target, linked = DragTarget(view, kind, settings)
+        local suffix = view.health.curved and " - curved HUD" or linked and " - linked bars" or " - " .. kind
+        Addon:SelectResourceMoveTarget(target, (view.scope == "player" and "Personal bars" or view.scope == "pet" and "Pet bars" or "Party bars") .. suffix)
     end)
     bar.trail = CreateFrame("StatusBar", nil, bar)
-    if bar.trail.SetRoundLayoutToNearestPixel then bar.trail:SetRoundLayoutToNearestPixel(true) end
+    if bar.trail.SetRoundLayoutToNearestPixel then bar.trail:SetRoundLayoutToNearestPixel(false) end
     bar.trail:SetStatusBarTexture(WHITE)
     local trailTexture = bar.trail:GetStatusBarTexture()
     if trailTexture.SetTexelSnappingBias then trailTexture:SetTexelSnappingBias(0) end
     if trailTexture.SetSnapToPixelGrid then trailTexture:SetSnapToPixelGrid(false) end
     bar.trail:SetStatusBarColor(0.32, 0.37, 0.4, 0.35)
     bar.fill = CreateFrame("StatusBar", nil, bar)
-    if bar.fill.SetRoundLayoutToNearestPixel then bar.fill:SetRoundLayoutToNearestPixel(true) end
+    if bar.fill.SetRoundLayoutToNearestPixel then bar.fill:SetRoundLayoutToNearestPixel(false) end
     bar.fill:SetAllPoints(bar.trail)
     bar.fill:SetFrameLevel(bar.trail:GetFrameLevel() + 1)
     bar.fill:SetStatusBarTexture(WHITE)
@@ -539,6 +653,7 @@ local function CreateBar(view, kind)
     bar.fill:EnableMouse(false)
     bar.trail:EnableMouse(false)
     local textLayer = CreateFrame("Frame", nil, bar)
+    bar.trimLayer = textLayer
     textLayer:SetAllPoints(bar.fill)
     textLayer:SetFrameLevel(bar.fill:GetFrameLevel() + 4)
     textLayer:EnableMouse(false)
@@ -606,6 +721,7 @@ function Addon:ApplyResources()
     end
     self:SyncNativeResources()
     self:UpdateSealIndicator()
+    self:ApplySwingTimer()
     if self.RefreshResourceOptions then self:RefreshResourceOptions() end
 end
 
@@ -625,6 +741,16 @@ function Addon:SetResourceOption(scope, key, value)
 end
 
 function Addon:SetResourceDimensions(scope, values)
+    if scope == "arc" then
+        for key, value in pairs(values) do
+            local range = self.resourceArcLimits[key]
+            if not range or not Number(value) or value < range[1] or value > range[2] then return false end
+        end
+        local arc = self:GetResourceSettings().player.arc
+        for key, value in pairs(values) do arc[key] = value end
+        self:ApplyResources()
+        return true
+    end
     local target = self:GetResourceSettings()[scope]
     if not target then return false end
     local previousHeight = target.health and target.health.height
@@ -654,7 +780,13 @@ function Addon:ResetResourceLayout(scope)
     if scope ~= "player" and scope ~= "party" and scope ~= "pet" then return end
     local cfg = self:GetResourceSettings()
     local previous = cfg[scope]
+    if scope == "player" and previous.curved then
+        previous.arc = Defaults().player.arc
+        self:ApplyResources()
+        return
+    end
     cfg[scope] = Defaults()[scope]
+    if scope == "player" then cfg.player.arc = previous.arc end
     cfg[scope].values = previous.values
     cfg[scope].colours = previous.colours
     cfg[scope].style = previous.style
@@ -666,6 +798,7 @@ function Addon:FinishResourceEdit(save, closing)
     if not editor then return end
     self:EndResourceDrag()
     self:EndSealDrag()
+    self:EndSwingTimerDrag()
     self:CloseResourceMoveMode()
     local previous = editor
     editor = nil
@@ -694,7 +827,7 @@ function Addon:BeginResourceEdit()
     if not self:HideOptions() then return false end
     if editor then return true end
     local origin = self.currentOptionsPage
-    editor = { snapshot = Copy(self:GetResourceSettings()), origin = (origin == "party" or origin == "pet") and origin or "resources" }
+    editor = { snapshot = Copy(self:GetResourceSettings()), origin = (origin == "party" or origin == "pet" or origin == "swing") and origin or "resources" }
     EnsureDisplay()
     if not toolbar then
         toolbar = CreateFrame("Frame", "SmallerUIResourceEditor", UIParent, "BackdropTemplate")
@@ -709,9 +842,8 @@ function Addon:BeginResourceEdit()
         local title = toolbar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         title:SetPoint("TOP", 0, -14)
         title:SetText("Move mode: drag to move. Hold Shift to ignore snapping.")
-        local note = toolbar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        note:SetPoint("TOP", 0, -36)
-        note:SetText("Resize with corners. Done saves. Escape cancels all changes.")
+        toolbar.note = toolbar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        toolbar.note:SetPoint("TOP", 0, -36)
         local function Button(name, label, x, width, action)
             local button = CreateFrame("Button", name, toolbar, "UIPanelButtonTemplate")
             button:SetSize(width, 24)
@@ -726,8 +858,15 @@ function Addon:BeginResourceEdit()
         table.insert(UISpecialFrames, "SmallerUIResourceEditor")
     end
     self:ApplyResources()
-    local target = editor.origin == "party" and display.partyRoot or editor.origin == "pet" and display.pet or display.player
-    self:SelectResourceMoveTarget(target, editor.origin == "party" and "Party display" or editor.origin == "pet" and "Pet display" or "Personal resources")
+    toolbar.note:SetText(self:GetResourceSettings().player.curved and editor.origin == "resources"
+        and "Drag either arc to move the pair. Adjust arc size in Personal bars."
+        or "Resize with corners. Done saves. Escape cancels all changes.")
+    if editor.origin == "swing" then
+        self:SelectResourceMoveTarget(self:GetSwingTimerFrame(), "Swing timer")
+    else
+        local target = editor.origin == "party" and display.partyRoot or editor.origin == "pet" and display.pet or display.player
+        self:SelectResourceMoveTarget(target, editor.origin == "party" and "Party bars" or editor.origin == "pet" and "Pet bars" or "Personal bars")
+    end
     driver:SetScript("OnUpdate", Tick)
     toolbar:Show()
     return true
@@ -775,9 +914,9 @@ Tick = function()
             bar.pendingAt, bar.pendingValue = nil, nil
         end
         if bar.pulseAt then
-            local age = now - bar.pulseAt
-            if age >= 0.25 then bar.pulse:Hide(); bar.pulseAt = nil
-            else bar.pulse:SetAlpha(1 - age / 0.25) end
+            local remaining = 1 - (now - bar.pulseAt) / Addon.resourceMotion[bar.motion].fade
+            if remaining <= 0 then bar.pulse:Hide(); bar.pulseAt = nil
+            else bar.pulse:SetAlpha(remaining * remaining) end
         end
         if bar.pendingAt or bar.pulseAt then active = true end
     end

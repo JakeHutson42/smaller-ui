@@ -81,12 +81,9 @@ function Addon:CreateResourcePredictions(view, bar)
         bar.forecasts[kind] = segment
         return segment
     end
-    local direct = Segment("direct", 0.48, 0.9, 0.67, 0.95)
-    direct:SetPoint("TOPLEFT", bar.fill:GetStatusBarTexture(), "TOPRIGHT")
-    local hot = Segment("hot", 0.64, 0.91, 0.75, 0.6)
-    hot:SetPoint("TOPLEFT", direct:GetStatusBarTexture(), "TOPRIGHT")
+    Segment("direct", 0.48, 0.9, 0.67, 0.95)
+    Segment("hot", 0.64, 0.91, 0.75, 0.6)
     local dot = Segment("dot", 0.88, 0.37, 0.32, 0.65)
-    dot:SetPoint("TOPRIGHT", bar.fill:GetStatusBarTexture(), "TOPRIGHT")
     dot:SetReverseFill(true)
     if CreateUnitHealPredictionCalculator and UnitGetDetailedHealPrediction then
         view.healCalculator = CreateUnitHealPredictionCalculator()
@@ -97,8 +94,20 @@ function Addon:CreateResourcePredictions(view, bar)
 end
 
 function Addon:LayoutResourcePredictions(bar)
+    local forecasts = bar.forecasts
+    local curved = bar.curved == true
+    if forecasts.curved ~= curved then
+        forecasts.curved = curved
+        local start, finish = curved and "BOTTOMLEFT" or "TOPLEFT", curved and "TOPLEFT" or "TOPRIGHT"
+        forecasts.direct:ClearAllPoints()
+        forecasts.direct:SetPoint(start, bar.fill:GetStatusBarTexture(), finish)
+        forecasts.hot:ClearAllPoints()
+        forecasts.hot:SetPoint(start, forecasts.direct:GetStatusBarTexture(), finish)
+        forecasts.dot:ClearAllPoints()
+        forecasts.dot:SetPoint(finish, bar.fill:GetStatusBarTexture(), finish)
+    end
     for _, kind in ipairs({ "direct", "hot", "dot" }) do
-        bar.forecasts[kind]:SetSize(math.max(0, bar.fill:GetWidth()), math.max(0, bar.fill:GetHeight()))
+        forecasts[kind]:SetSize(math.max(0, bar.fill:GetWidth()), math.max(0, bar.fill:GetHeight()))
     end
 end
 

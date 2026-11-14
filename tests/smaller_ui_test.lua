@@ -10,14 +10,16 @@ local function boot(saved, characterSaved, compatibility)
     env._G = env
     local messages = {}
     local state = { scale = 0.75, combat = false, writes = 0, reloads = 0, elementWrites = 0,
-        now = 100, widgets = {}, objects = {}, cooldowns = {}, charges = {}, actions = {}, usable = {},
+        now = 100, widgets = {}, objects = {},
         units = { player = { health = 1000, maximum = 1000, power = 70, powerMax = 100, token = "MANA", name = "Your character" } },
         cvars = { nameplateShowSelf = "1" }, cvarWrites = 0, forbiddenActions = 0,
         combatLogRegistrations = 0, legacyCombatLog = compatibility and compatibility.legacyCombatLog == true }
     local frame
     local function event(name, ...)
+        local unit = ...
         for _, widget in ipairs(state.widgets) do
-            if widget.events[name] then widget.scripts.OnEvent(widget, name, ...) end
+            local filter = widget.events[name]
+            if filter == true or filter and filter == unit then widget.scripts.OnEvent(widget, name, ...) end
         end
     end
     local function tick(delta)
@@ -43,6 +45,8 @@ local function boot(saved, characterSaved, compatibility)
             end
             self.events[value] = true
         end
+        function widget:RegisterUnitEvent(value, unit) self.events[value] = unit end
+        function widget:UnregisterEvent(value) self.events[value] = nil end
         function widget:SetScript(value, callback) self.scripts[value] = callback end
         function widget:GetParent() return self.parent end
         function widget:GetScale() return name == "UIParent" and state.scale or self.scale end
@@ -112,7 +116,6 @@ local function boot(saved, characterSaved, compatibility)
         function widget:SetShown(value) if value then self:Show() else self:Hide() end end
         function widget:GetFrameLevel() return 1 end
         function widget:GetName() return name end
-        function widget:GetAttribute(attribute) return self[attribute] end
         function widget:SetSize(width, height) self.width, self.height = width, height end
         function widget:SetWidth(width) self.width = width end
         function widget:SetHeight(height) self.height = height end
@@ -154,6 +157,11 @@ local function boot(saved, characterSaved, compatibility)
             texture.kind = "Texture"
             return texture
         end
+        function widget:CreateMaskTexture()
+            local texture = self:CreateTexture()
+            texture.kind = "MaskTexture"
+            return texture
+        end
         function widget:GetThumbTexture() return Widget(nil, self) end
         for _, method in ipairs({ "SetPoint", "SetJustifyH",
             "SetTextColor", "SetFrameStrata", "SetClampedToScreen", "SetMovable", "EnableMouse",
@@ -179,6 +187,17 @@ local function boot(saved, characterSaved, compatibility)
         function widget:SetRoundLayoutToNearestPixel(value) self.roundLayout = value end
         function widget:SetTexelSnappingBias(value) self.texelBias = value end
         function widget:SetSnapToPixelGrid(value) self.snapToGrid = value end
+        function widget:SetTexCoord(...) self.texCoords = { ... } end
+        function widget:AddMaskTexture(mask)
+            assert(not self.mask and mask.kind == "MaskTexture", "A texture received an invalid or duplicate mask")
+            self.mask = mask
+        end
+        function widget:RemoveMaskTexture(mask)
+            assert(self.mask == mask, "A texture lost the wrong mask")
+            self.mask = nil
+        end
+        function widget:SetOrientation(value) self.orientation = value end
+        function widget:SetRotatesTexture(value) self.rotatesTexture = value end
         function widget:EnableMouse(value) self.mouseEnabled = value end
         function widget:SetTexture(value) self.textureValue = value end
         function widget:SetDesaturated(value) self.desaturated = value end
@@ -307,20 +326,13 @@ local function boot(saved, characterSaved, compatibility)
     state.MakeElement("TargetFrame")
     state.MakeElement("MainMenuBar", nil, 0.9)
     state.MakeElement("MultiBarBottomLeft", env.MainMenuBar, 0.8)
-    function state.MakeAction(name, action)
-        local button = state.MakeElement(name, env.MainMenuBar)
-        button.action = action
-        state.actions[action] = { kind = "spell", id = 1000 + action }
-        return button
-    end
-    state.MakeAction("ActionButton1", 1)
-    state.MakeAction("MultiBarBottomLeftButton2", 62)
     env.GetTime = function() return state.now end
     env.GetCursorPosition = function() return state.cursorX or 100, state.cursorY or 100 end
     env.IsMouseButtonDown = function() return state.mouseDown or false end
     env.IsShiftKeyDown = function() return state.shift or false end
     env.PixelUtil = { GetPixelToUIUnitFactor = function() return state.pixelSize or 1 end }
     env.Enum = { StatusBarInterpolation = { Immediate = 0, ExponentialEaseOut = 1 } }
+    env.Enum.PlayerSwingType = { MainHand = 0, OffHand = 1, Ranged = 2 }
     env.Enum.UnitIncomingHealClampMode = { MissingHealth = 0 }
     env.PowerBarColor = { MANA = { r = 0.2, g = 0.5, b = 0.95 }, RAGE = { r = 0.9, g = 0.2, b = 0.15 }, ENERGY = { r = 1, g = 0.8, b = 0.1 }, FOCUS = { r = 1, g = 0.5, b = 0.25 } }
     env.MANA, env.RAGE, env.ENERGY, env.FOCUS = "Mana", "Rage", "Energy", "Focus"
@@ -419,21 +431,6 @@ local function boot(saved, characterSaved, compatibility)
             event("CVAR_UPDATE", name)
         end,
     }
-    env.GetActionInfo = function(action)
-        local info = state.actions[action]
-        if info then return info.kind, info.id end
-    end
-    env.C_ActionBar = {
-        GetActionCooldown = function(action)
-            return state.cooldowns[action] or { startTime = 0, duration = 0, isEnabled = true }
-        end,
-        GetActionCharges = function(action) return state.charges[action] end,
-        IsUsableAction = function(action)
-            local value = state.usable[action]
-            if value == nil then return true end
-            return value
-        end,
-    }
     state.auras = {}
     env.C_UnitAuras = { GetAuraDataByIndex = function(unit, index, filter)
         if state.auraUnavailable then error("Aura access unavailable") end
@@ -463,7 +460,6 @@ local function boot(saved, characterSaved, compatibility)
     env.UnitGetDetailedHealPrediction = function(unit, healer, calculator) calculator.unit, calculator.healer = unit, healer end
     env.UnitGetIncomingHeals = function(unit) return state.units[unit].incoming end
     env.C_Spell = {
-        GetSpellCooldown = function() return state.gcd or { startTime = 0, duration = 0 } end,
         GetSpellInfo = function(spell)
             if state.spellInfo and state.spellInfo[spell] then return state.spellInfo[spell] end
             local names = { [20154] = "Seal of Righteousness", [21084] = "Seal of Righteousness",
@@ -573,8 +569,8 @@ check(#env.UISpecialFrames == 0, "Addon does not register a separate settings wi
 command("")
 check(env.SmallerUIOptions == panel and #state.categories == 6, "Opening settings reuses the same registered pages")
 check(state.registeredAddon == state.addon.settingsCategory
-    and state.addon.readySettingsCategory.parent == state.addon.settingsCategory,
-    "Cooldown settings are a native subcategory under Smaller UI")
+    and state.addon.resourceSettingsCategory.parent == state.addon.settingsCategory,
+    "Personal resource settings are a native subcategory")
 check(env.SmallerUIGlobalSlider.template == "UISliderTemplateWithLabels", "Global slider uses Familiar Names' native labelled template")
 check(not env.SmallerUIKeep_minimap and not env.SmallerUIElementInput_minimap
     and #state.addon:GetVisibleElementSettings() == 5, "Minimap scaling controls are hidden")
@@ -688,202 +684,12 @@ tick()
 env.SmallerUIMinimapButton.scripts.OnDragStop(env.SmallerUIMinimapButton)
 check(env.SmallerUIDB.minimapAngle ~= angle and not env.SmallerUIMinimapButton.scripts.OnUpdate, "Dragging saves launcher position and stops its update loop")
 
-state.addon:SelectOptionsPage("cooldowns")
-check(env.SmallerUIReadyPage:IsShown() and not panel:IsShown()
-    and state.currentCategory == state.addon.readySettingsCategory, "Cooldowns use the native settings subcategory")
-check(not env.SmallerUIDB.readyFlash and not env.SmallerUIChooseSlot.enabled, "Ready flashes start disabled")
-state.Click(env.SmallerUIReadyEnabled)
-check(env.SmallerUIDB.readyFlash and env.SmallerUIChooseSlot.enabled, "Master checkbox enables slot selection")
-state.pendingWoWSettings = true
-state.Click(env.SmallerUIChooseSlot)
-check(not state.addon:IsPickingSlot() and env.SettingsPanel:IsShown(),
-    "Slot picker respects WoW's unapplied settings before closing its native window")
-state.pendingWoWSettings = false
-local casts = 0
-env.ActionButton1.scripts.OnClick = function() casts = casts + 1 end
-state.Click(env.SmallerUIChooseSlot)
-check(state.addon:IsPickingSlot() and not env.SettingsPanel:IsShown()
-    and state.skippedGameMenuTransition, "Choose slot closes native settings without opening the game menu")
-check(env.SmallerUIPick_ActionButton1:IsShown(), "Picker covers visible action slots")
-state.Click(env.SmallerUIPick_ActionButton1)
-check(casts == 0 and env.ActionButton1.action == 1, "Picking a slot neither casts nor changes the secure action")
-check(env.SmallerUICharDB.readySlots.ActionButton1 and env.SettingsPanel:IsShown()
-    and not state.addon:IsPickingSlot(), "Click selects a slot and returns to native settings")
-check(env.SmallerUIReadyPage:IsShown(), "Picker returns to the cooldown tab")
-local glow = env.SmallerUIReadyGlow_ActionButton1
-tick(0.1)
-check(not glow:IsShown(), "A skill already ready on startup does not flash")
-state.Click(env.SmallerUITestFlashes)
-check(glow:IsShown(), "Test button previews selected slots")
-near(glow:GetWidth(), env.ActionButton1:GetWidth() * env.ActionButton1:GetEffectiveScale(), "Glow follows the action button's effective size")
-tick(1.05)
-check(not glow:IsShown(), "Preview ends after one second")
-
-state.cooldowns[1] = { startTime = state.now, duration = 2, isEnabled = true }
-tick(0.05)
-check(not glow:IsShown(), "Active cooldown does not flash early")
-tick(2.05)
-check(glow:IsShown(), "Real cooldown completion flashes the chosen slot")
-tick(0.5)
-check(glow:IsShown() and glow:GetAlpha() < 1, "Ready flash pulses and fades")
-tick(0.55)
-check(not glow:IsShown(), "Automatic flash lasts one second")
-tick(0.1)
-check(not glow:IsShown(), "Ready skill does not flash repeatedly")
-check(not env.SmallerUIReadyGlow_MultiBarBottomLeftButton2, "Unselected slots do not get automatic flashes")
-
-state.gcd = { startTime = state.now, duration = 1.5 }
-state.cooldowns[1] = { startTime = state.now, duration = 1.5, isEnabled = true }
-tick(0.05); tick(1.6)
-check(not glow:IsShown(), "Global cooldown alone never arms a ready flash")
-state.gcd = nil
-state.cooldowns[1] = { startTime = state.now, duration = 2, isEnabled = true }
-tick(0.05); tick(1.8)
-state.gcd = { startTime = state.now, duration = 1.5 }
-state.cooldowns[1] = { startTime = state.now, duration = 1.5, isEnabled = true }
-tick(0.2)
-check(not glow:IsShown(), "A real cooldown waits for an overlapping global cooldown")
-tick(1.4)
-check(glow:IsShown(), "Pending ready flash fires after the global cooldown")
-tick(1.05)
-state.gcd = nil
-state.usable[1] = false
-state.cooldowns[1] = { startTime = state.now, duration = 2, isEnabled = true }
-tick(0.05); tick(2.1)
-check(not glow:IsShown(), "An unusable skill waits instead of flashing")
-state.usable[1] = true
-tick(0.05)
-check(glow:IsShown(), "Flash fires once the off-cooldown skill becomes usable")
-tick(1.05)
-
-state.charges[1] = { currentCharges = 0, maxCharges = 2 }
-state.cooldowns[1] = { startTime = 0, duration = 0, isEnabled = true }
-tick(0.05)
-state.charges[1].currentCharges = 1
-tick(0.05)
-check(glow:IsShown(), "Regaining the first charge flashes an unavailable skill")
-tick(1.05)
-state.charges[1].currentCharges = 2
-tick(0.05)
-check(not glow:IsShown(), "Additional charges do not flash an already usable skill")
-state.charges[1] = nil
-
-state.cooldowns[1] = { startTime = state.now, duration = 2, isEnabled = true }
-tick(0.05)
-env.ActionButton1.action = 13
-state.actions[13] = { kind = "spell", id = 1013 }
-event("ACTIONBAR_PAGE_CHANGED")
-tick(2.1)
-check(not glow:IsShown(), "Bar-page changes discard the previous skill's cooldown history")
-state.cooldowns[13] = { startTime = state.now, duration = 2, isEnabled = true }
-tick(0.05); tick(2.1)
-check(glow:IsShown(), "Chosen visual slot follows its current bar page")
-tick(1.05)
-state.cooldowns[13] = { startTime = state.now, duration = 2, isEnabled = true }
-tick(0.05)
-state.actions[13] = { kind = "spell", id = 9999 }
-state.cooldowns[13] = nil
-event("ACTIONBAR_SLOT_CHANGED", 13)
-tick(0.05)
-check(not glow:IsShown(), "Replacing a skill does not generate a false ready flash")
-
-state.Click(env.SmallerUIChooseSlot)
-env.SmallerUISlotPicker:Hide()
-check(not state.addon:IsPickingSlot() and env.SettingsPanel:IsShown()
-    and env.SmallerUICharDB.readySlots.ActionButton1, "Escape cancels selection without removing the slot")
-state.Click(env.SmallerUIChooseSlot)
-state.Click(env.SmallerUIPick_ActionButton1, "RightButton")
-check(not state.addon:IsPickingSlot() and env.SmallerUICharDB.readySlots.ActionButton1, "Right-click cancels selection")
-state.Click(env.SmallerUIChooseSlot)
-state.combat = true
-event("PLAYER_REGEN_DISABLED")
-check(not state.addon:IsPickingSlot() and not env.SettingsPanel:IsShown()
-    and state.addon.pendingOptionsPage == "cooldowns" and not env.SmallerUIChooseSlot.enabled,
-    "Entering combat cancels picking and defers reopening native settings")
-check(not env.SmallerUIPick_ActionButton1:IsShown(), "Combat cancellation removes click-intercepting overlays")
-check(not state.addon:BeginSlotPicker(), "Picker refuses direct requests during combat")
-state.cooldowns[13] = { startTime = state.now, duration = 2, isEnabled = true }
-local protectedWrites = state.writes + state.elementWrites
-tick(0.05); tick(2.1)
-check(glow:IsShown() and state.writes + state.elementWrites == protectedWrites, "Prepared ready flashes work in combat without changing protected scales")
-state.combat = false
-event("PLAYER_REGEN_ENABLED"); tick(1.05)
-check(env.SettingsPanel:IsShown() and state.currentCategory == state.addon.readySettingsCategory,
-    "Cooldown settings reopen safely after combat")
-
-local secret = setmetatable({ secret = true }, { __tostring = function() error("Secret was inspected") end })
-state.actions[13].id = secret
-state.cooldowns[13] = { startTime = secret, duration = secret, modRate = secret,
-    isEnabled = true, isActive = true, isOnGCD = false }
-event("SPELL_UPDATE_COOLDOWN")
-tick(0.1)
-state.cooldowns[13].isActive = false
-event("SPELL_UPDATE_COOLDOWN")
-check(glow:IsShown(), "Public ready events work without inspecting restricted timings or spell IDs")
-tick(1.05)
-state.cooldowns[13].isActive = true
-state.cooldowns[13].isOnGCD = true
-event("SPELL_UPDATE_COOLDOWN")
-state.cooldowns[13].isActive = false
-event("SPELL_UPDATE_COOLDOWN")
-check(not glow:IsShown(), "Restricted-timing public events still ignore the global cooldown")
-state.cooldowns[13].isActive = nil
-state.cooldowns[13].isOnGCD = nil
-event("SPELL_UPDATE_COOLDOWN")
-check(state.addon.cooldownRestricted and not glow:IsShown(), "Unavailable public cooldown state is skipped without false alerts")
-state.actions[13].id = 1013
-state.cooldowns[13] = { startTime = state.now, duration = 4, modRate = 2, isEnabled = true }
-tick(0.05); tick(2.1)
-check(glow:IsShown(), "Cooldown speed modifiers are respected")
-
-state.Click(env.SmallerUIReadyEnabled)
-check(not glow:IsShown() and env.SmallerUICharDB.readySlots.ActionButton1, "Disabling the feature stops glows while keeping selected slots")
-state.Click(env.SmallerUIReadyEnabled)
-local savedGlobal, savedCharacter = env.SmallerUIDB, env.SmallerUICharDB
-local sameCharacter = boot(savedGlobal, savedCharacter)
-check(sameCharacter.SmallerUICharDB.readySlots.ActionButton1, "Selected slots persist for the same character")
-local otherCharacter = boot(savedGlobal)
-check(next(otherCharacter.SmallerUICharDB.readySlots) == nil, "Other characters have independent slot selections")
-state.Click(env.SmallerUIChooseSlot)
-state.Click(env.SmallerUIPick_ActionButton1)
-check(not env.SmallerUICharDB.readySlots.ActionButton1, "Picking a selected slot again removes it")
-state.addon:ToggleReadySlot("ActionButton1")
-state.addon:ToggleReadySlot("MultiBarBottomLeftButton2")
-check(#state.addon:GetReadySlots() == 2, "Multiple slots can be selected independently")
-state.Click(env.SmallerUIReadyPage.rows[1].remove)
-check(#state.addon:GetReadySlots() == 1 and not env.SmallerUICharDB.readySlots.ActionButton1,
-    "Remove button untracks the corresponding list row")
-state.Click(env.SmallerUIClearSlots)
-check(next(env.SmallerUICharDB.readySlots) == nil and not env.SmallerUIReadyGlow_ActionButton1:IsShown(), "Clear all removes selected slots and stops their effects")
-
-local cleaned = boot({ readyFlash = "yes", minimapAngle = 0/0 },
-    { readySlots = { ActionButton1 = true, ActionButton99 = true, RandomFrame = true, ActionButton2 = "yes" } })
-check(not cleaned.SmallerUIDB.readyFlash and cleaned.SmallerUIDB.minimapAngle == 225, "Invalid feature preferences recover safely")
-check(cleaned.SmallerUICharDB.readySlots.ActionButton1 and not cleaned.SmallerUICharDB.readySlots.ActionButton99
-    and not cleaned.SmallerUICharDB.readySlots.RandomFrame and not cleaned.SmallerUICharDB.readySlots.ActionButton2,
-    "Saved slot names and flags are validated")
-
-local legacy, legacyState, _, legacyTick = boot({ readyFlash = true }, { readySlots = { ActionButton1 = true } })
-legacy.C_ActionBar, legacy.C_Spell = nil, nil
-legacy.GetActionCooldown = function(action)
-    local cd = legacyState.cooldowns[action] or { startTime = 0, duration = 0 }
-    return cd.startTime, cd.duration, 1, 1
-end
-legacy.GetActionCharges = function() end
-legacy.IsUsableAction = function() return true end
-legacy.GetSpellCooldown = function() return 0, 0 end
-legacyState.cooldowns[1] = { startTime = legacyState.now, duration = 2 }
-legacyTick(0.05); legacyTick(2.1)
-check(legacy.SmallerUIReadyGlow_ActionButton1:IsShown(), "Legacy public cooldown APIs remain supported")
-
-local resetFeatures, resetFeatureState, _, _, resetFeatureCommand = boot({
-    readyFlash = true, enabled = true, scale = 0.4, elements = { minimap = 1.2 } },
-    { readySlots = { ActionButton1 = true } })
-resetFeatureCommand("reset")
-check(resetFeatureState.reloads == 1 and not resetFeatures.SmallerUIDB.enabled
-    and next(resetFeatures.SmallerUIDB.elements) == nil, "Scale reset still restores global and individual sizes")
-check(resetFeatures.SmallerUIDB.readyFlash and resetFeatures.SmallerUICharDB.readySlots.ActionButton1,
-    "Scale reset preserves the separately managed cooldown feature")
+local upgraded = boot({ scale = 0.4, enabled = true, readyFlash = true, minimapAngle = 0/0 },
+    { readySlots = { ActionButton1 = true }, resources = { enabled = true, player = { health = { width = 280 } } } })
+check(upgraded.SmallerUIDB.readyFlash == nil and upgraded.SmallerUICharDB.readySlots == nil
+    and upgraded.SmallerUIDB.scale == 0.4 and upgraded.SmallerUIDB.minimapAngle == 225
+    and upgraded.SmallerUICharDB.resources.player.health.width == 280,
+    "Upgrading discards retired cooldown settings and keeps scaling, launcher and resource preferences")
 
 local nativeQueue, nativeQueueState, nativeQueueEvent, nativeQueueTick, nativeQueueCommand = boot(nil)
 nativeQueueState.combat = true
@@ -906,7 +712,7 @@ check(not addon:GetResourceSettings().enabled and not addon:GetResourceSettings(
     and not addon:GetResourceDisplay() and state.cvarWrites == 0, "New resource displays are opt-in and leave Blizzard unchanged by default")
 addon:ShowOptions("resources")
 check(state.currentCategory == addon.resourceSettingsCategory
-    and addon.resourceSettingsCategory.parent == addon.settingsCategory, "Personal resources has a native settings subcategory")
+    and addon.resourceSettingsCategory.parent == addon.settingsCategory, "Personal bars has a native settings subcategory")
 state.Click(env.SmallerUIPersonalEnabled)
 local hud = addon:GetResourceDisplay()
 check(hud.player:IsShown() and not hud.partyRoot:IsShown(), "Enabling personal resources shows player bars without a party")
@@ -974,7 +780,7 @@ state.units.player.health, state.units.player.maximum = 850, 1800
 event("UNIT_HEALTH", "player")
 
 addon:ShowOptions("party")
-check(state.currentCategory == addon.partySettingsCategory, "Party display has its own simple native page")
+check(state.currentCategory == addon.partySettingsCategory, "Party bars has its own simple native page")
 state.Click(env.SmallerUIPartyEnabled)
 check(not hud.partyRoot:IsShown(), "Optional party display stays hidden while solo")
 state.units.party1 = { health = 1900, maximum = 2500, power = 80, powerMax = 100, token = "ENERGY", name = "Alex" }
@@ -983,7 +789,7 @@ event("GROUP_ROSTER_UPDATE")
 check(hud.partyRoot:IsShown() and hud.party[1]:IsShown() and hud.party[2]:IsShown()
     and not hud.party[3]:IsShown(), "Roster updates show exactly the available party members")
 check(hud.party[1].name:GetText() == "Alex" and hud.party[1].portrait.portraitUnit == "party1",
-    "Party display uses real unit names and portraits")
+    "Party bars uses real unit names and portraits")
 state.units.party1.power = 35
 event("UNIT_POWER_UPDATE", "party1")
 check(hud.party[1].power.fill:GetValue() == 35, "Party resources also receive normal unit power updates")
@@ -1204,10 +1010,10 @@ check(powerHud.player.power.fill:GetValue() == 4 and powerHud.player.power.fill.
 
 local petEnv, petState, petEvent, petTick = boot(nil)
 local petAddon = petState.addon
-check(not petAddon:GetResourceSettings().petEnabled, "Pet display is disabled by default")
+check(not petAddon:GetResourceSettings().petEnabled, "Pet bars is disabled by default")
 petAddon:ShowOptions("pet")
 check(petState.currentCategory == petAddon.petSettingsCategory
-    and petAddon.petSettingsCategory.parent == petAddon.settingsCategory, "Pet display has its own native settings page")
+    and petAddon.petSettingsCategory.parent == petAddon.settingsCategory, "Pet bars has its own native settings page")
 petState.Click(petEnv.SmallerUIPetEnabled)
 local petHud, petCfg = petAddon:GetResourceDisplay(), petAddon:GetResourceSettings()
 check(not petHud.pet:IsShown() and not petHud.player:IsShown() and not petHud.partyRoot:IsShown()
@@ -1320,7 +1126,8 @@ check(petState.cvarWrites == 0, "Pet settings and previews never alter Blizzard'
 local menuEnv, menuState, menuEvent, menuTick, menuCommand = boot(nil)
 local menuAddon = menuState.addon
 local menuRoot = menuAddon.settingsCategory
-local expectedMenus = { "UI scaling", "Personal resources", "Party display", "Pet display", "Cooldown flashes" }
+local expectedMenus = { "UI scaling", "Personal bars", "Party bars", "Pet bars", "Swing timer" }
+check(menuRoot.name == "Forever QoL" and menuEnv.SLASH_SMALLERUI3 == "/fqol", "The new branding and command are available")
 check(menuRoot.panel ~= menuEnv.SmallerUIOptions and menuRoot.alphabetical == false,
     "The parent is a navigation group and preserves the chosen child order")
 for index, name in ipairs(expectedMenus) do
@@ -1332,10 +1139,10 @@ menuTick()
 check(menuState.currentCategory == menuAddon.scaleSettingsCategory and menuRoot:IsExpanded()
     and menuEnv.SmallerUIOptions:IsShown() and not menuRoot.panel:IsShown(),
     "Clicking the parent expands the group and selects the first child with scaling controls")
-menuAddon:ShowOptions("cooldowns")
+menuAddon:ShowOptions("party")
 menuState.ToggleCategory(menuRoot)
 menuTick()
-check(not menuRoot:IsExpanded() and menuState.currentCategory == menuAddon.readySettingsCategory,
+check(not menuRoot:IsExpanded() and menuState.currentCategory == menuAddon.partySettingsCategory,
     "Collapsing the dropdown stays collapsed without changing the selected settings page")
 menuState.pendingWoWSettings = true
 menuState.ToggleCategory(menuRoot)
@@ -1594,6 +1401,41 @@ do
     addon:SetResourceOption("seal", "enabled", false)
     event("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-guid", 21082)
     check(cfg.seal.lastSpellID == 21082 and not icon:IsShown(), "Disabled seal indicators still remember newly cast seal families")
+end
+
+do
+    local env, state, event = boot(nil)
+    state.class = "PALADIN"
+    local addon = state.addon
+    addon:SetResourceOption("root", "enabled", true)
+    local icon = addon:GetResourceDisplay().player.seal
+    local auras = { { auraInstanceID = 11, spellId = 20154, name = "Seal of Righteousness", icon = 1234 } }
+    state.auras.player = { HELPFUL = auras }
+    env.C_UnitAuras.GetUnitAuraInstanceIDs = function(unit, filter)
+        check(unit == "player" and filter == "HELPFUL", "Seal tracking queries the player's buffs")
+        local instances = {}
+        for index, aura in ipairs(auras) do instances[index] = aura.auraInstanceID end
+        return instances
+    end
+    event("UNIT_AURA", "player")
+    state.combat, state.auraUnavailable = true, true
+    event("PLAYER_REGEN_DISABLED")
+    check(icon.status == "active" and icon.texture.textureValue == 1234,
+        "An observed seal stays active in combat while its public aura instance remains present")
+    auras[1] = { auraInstanceID = 12, spellId = privateValue, name = privateValue, icon = privateValue }
+    event("UNIT_AURA", "player")
+    check(icon.status == "unknown", "A different restricted buff cannot keep an expired seal active")
+    local crusader = { auraInstanceID = 13, spellId = 21082, name = "Seal of the Crusader", icon = 4321 }
+    env.C_UnitAuras.GetPlayerAuraBySpellID = function(spell) if spell == 21082 then return crusader end end
+    auras[2] = crusader
+    event("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-guid", 21082)
+    check(icon.status == "active" and icon.texture.textureValue == 4321,
+        "A targeted query can confirm a newly cast readable seal when the buff scan is unavailable")
+    auras[2], crusader = nil, nil
+    auras[1] = nil
+    state.combat, state.auraUnavailable = false, false
+    event("PLAYER_REGEN_ENABLED")
+    check(icon.status == "missing", "Leaving combat refreshes the seal status without another aura event")
 end
 
 local stepEnv, stepState, stepEvent, stepTick = boot(nil)
@@ -2038,7 +1880,7 @@ do
         return env, state, event, tick, addon, hud
     end
     local env, state, event, tick, addon, hud = Fixture()
-    check(env.SmallerUIMoveSelection:IsShown() and env.SmallerUIMoveSelection.label:GetText() == "Personal resources",
+    check(env.SmallerUIMoveSelection:IsShown() and env.SmallerUIMoveSelection.label:GetText() == "Personal bars",
         "Move mode initially highlights and names the current display")
     local startX, startY = Bounds(hud.player.health)
     local petX, petY = Bounds(hud.pet.health)
@@ -2050,7 +1892,7 @@ do
     near(x, petX, "A bar snaps to another bar's edge within eight screen pixels")
     check(env.SmallerUIMoveVerticalGuide:IsShown() and addon:GetResourceMoveState().snapX == petX,
         "Active alignment displays a vertical guide at the matched edge")
-    check(env.SmallerUIMoveSelection.label:GetText() == "Personal resources - health",
+    check(env.SmallerUIMoveSelection.label:GetText() == "Personal bars - health",
         "Independent dragging identifies the selected bar")
     state.shift = true
     tick()
@@ -2367,11 +2209,20 @@ do
     local x, y, w, h = Pixels(hud.player.health)
     local ix, iy, iw, ih = Pixels(hud.player.health.fill)
     check(Near(x, ix) and Near(y, iy) and Near(w, iw) and Near(h, ih), "Borderless bars fill their complete frame without invisible padding")
-    local powerInnerLeft = hud.player.power.trail._points[1]
-    check(powerInnerLeft[2] == hud.player.health.trail and powerInnerLeft[3] == "BOTTOMLEFT"
-        and hud.player.health.fill:GetStatusBarTexture().snapToGrid == false
-        and hud.player.power.fill:GetStatusBarTexture().snapToGrid == false,
-        "Linked live fills share their inner left-edge anchor without independent texture snapping")
+    cfg.player.x, cfg.player.y = 3.609392661019228e-05, -158.7889374880015
+    addon:SetResourceStyle("player", "border", true)
+    addon:SetResourceDimensions("player", { scale = 0.7, healthWidth = 306.28566, powerWidth = 260,
+        healthHeight = 12.22221, powerHeight = 6.66666, gap = 4 })
+    local hx = Pixels(hud.player.health.fill)
+    local px = Pixels(hud.player.power.fill)
+    local powerAnchor = hud.player.power._points[1]
+    check(Near(hx, px) and not hud.player.power.roundLayout and powerAnchor[2] == hud.player.health
+        and #hud.player.power._points == 1 and Near(hx, math.floor(hx + 0.5)),
+        "Linked fills of different widths share a single screen-pixel origin at fractional scales")
+    for _, bar in ipairs({ hud.player.health, hud.player.power }) do
+        check(not bar.fill.roundLayout and not bar.trail.roundLayout and bar.fill:GetStatusBarTexture().snapToGrid == false,
+            "Fill and trail inherit the pixel-aligned outer frame without another snap")
+    end
     pixelState.units.player.powerMax = 0
     pixelEvent("UNIT_MAXPOWER", "player")
     local _, hy, _, hh = Pixels(hud.player.health)
@@ -2447,6 +2298,174 @@ do
     local style = restored.addon:GetResourceSettings().player.style
     check(style.combatOpacity == 68 and style.outOfCombatOpacity == 25 and style.barTexture == #addon.resourceTextures,
         "Opacity and texture settings persist through reload")
+end
+
+do
+    local env, state, event, tick = boot(nil)
+    state.geometry = true
+    local addon = state.addon
+    addon:SetResourceOption("root", "enabled", true)
+    addon:ShowOptions("resources")
+    local cfg = addon:GetResourceSettings()
+    local hud = addon:GetResourceDisplay()
+    local health, power = hud.player.health, hud.player.power
+    local oldHealthX, oldHealthY = health:GetCenter()
+    local fill = health.fill:GetStatusBarTexture()
+    state.Select(env.SmallerUIPersonalLayout, 2)
+    check(cfg.player.curved and env.SmallerUIPersonalArcwidth:IsVisible()
+        and not env.SmallerUIPersonalhealthWidth:IsVisible(), "Selecting Curved HUD exposes its own sizing controls")
+    local hx, hy = health:GetCenter()
+    local px, py = power:GetCenter()
+    local centre = hud.player:GetCenter()
+    near(centre - hx, px - centre, "The arcs straddle the display centre symmetrically")
+    check(hy == py and hx < px and health.fill.orientation == "VERTICAL" and power.fill.orientation == "VERTICAL"
+        and fill.mask == health.arcMask and power.arcMask.texCoords[1] == 1
+        and not health.mouseEnabled, "Both live bars use mirrored masks and vertical, mouse-transparent fills")
+    check(health.trail:GetStatusBarTexture().mask == health.arcMask and health.pulse.mask == health.arcMask
+        and health.forecasts.direct:GetStatusBarTexture().mask == health.arcMask
+        and health.forecasts.direct._points[1][1] == "BOTTOMLEFT",
+        "The same curve clips the trail, pulse, and incoming-heal extension")
+    state.units.player.health, state.units.player.power = privateValue, privateValue
+    event("UNIT_HEALTH", "player")
+    event("UNIT_POWER_UPDATE", "player")
+    check(health.fill:GetValue() == privateValue and power.fill:GetValue() == privateValue,
+        "Curved HUD passes restricted values directly to the native renderer")
+    state.units.player.health, state.units.player.power = 630, 45
+    env.SmallerUIPersonalArcgap:SetText("260")
+    state.Click(env.SmallerUIPersonalArcApply)
+    check(cfg.player.arc.gap == 260 and cfg.player.gap == 4 and health.fill:GetValue() == 630,
+        "Arc separation has independent settings and leaves the live values current")
+    check(addon:BeginResourceEdit() and health.mouseEnabled and not health.grip:IsShown(),
+        "The arc pair is draggable in Move mode")
+    state.mouseDown, state.shift = true, true
+    addon:BeginResourceDrag(hud.player, "power")
+    state.cursorX = 142
+    tick()
+    addon:FinishResourceEdit(true)
+    near(cfg.player.arc.x, 42, "Moving the mana arc saves the whole pair's offset")
+    state.mouseDown = false
+    state.Select(env.SmallerUIPersonalLayout, 1)
+    local horizontalX, horizontalY = health:GetCenter()
+    check(not cfg.player.curved and health.fill.orientation == "HORIZONTAL" and fill.mask == nil
+        and not health.arcTrack:IsShown() and horizontalX == oldHealthX and horizontalY == oldHealthY
+        and health.forecasts.direct._points[1][1] == "TOPLEFT",
+        "Switching back restores horizontal position, textures and forecast anchors")
+    state.Select(env.SmallerUIPersonalLayout, 2)
+    local _, restored = boot(nil, env.SmallerUICharDB)
+    check(restored.addon:GetResourceSettings().player.arc.x == 42
+        and restored.addon:GetResourceDisplay().player.health.fill.orientation == "VERTICAL",
+        "Arc layout and offset persist through reload")
+end
+
+do
+    local env, state, event, tick = boot(nil)
+    local addon = state.addon
+    addon:SetResourceOption("root", "enabled", true)
+    addon:ShowOptions("resources")
+    local cfg = addon:GetResourceSettings()
+    local hud = addon:GetResourceDisplay()
+    local health, power = hud.player.health, hud.player.power
+    local fill = health.fill:GetStatusBarTexture()
+    state.Select(env.SmallerUIPersonalTheme, 3)
+    check(cfg.player.style.theme == 3 and fill.textureValue:find("Runefang", 1, true)
+        and health.trim.line:IsShown() and health.trim.left:IsShown(),
+        "Warlock preset applies the generated surface and jewelled trim")
+    check(health.fill.barColor[3] > health.fill.barColor[2] and power.fill.barColor[2] > power.fill.barColor[3]
+        and cfg.party.style.theme == 1 and cfg.pet.style.theme == 1,
+        "Applying a preset changes the selected display's palette only")
+    state.Click(env.SmallerUIPersonalThemeColours)
+    local violet = health.fill.barColor[3]
+    state.Select(env.SmallerUIPersonalTheme, 4)
+    check(health.fill.barColor[3] == violet and fill.textureValue:find("Rivetsteel", 1, true)
+        and not health.trim.left:IsShown() and health.trim.line:IsShown(),
+        "Presets can replace artwork and trim while retaining custom colours")
+    state.Select(env.SmallerUIPersonalTrim, 1)
+    check(not health.trim.line:IsShown(), "Selecting plain trim removes the decoration immediately")
+    state.Select(env.SmallerUIPersonalMotion, 3)
+    state.units.player.health = 510
+    event("UNIT_HEALTH", "player")
+    check(health.fill:GetInterpolatedValue() == 510 and health.trail:GetValue() == 1000
+        and health.trail.barColor[4] == 0.56, "Fluid motion adds a tinted trail behind immediate health")
+    tick(0.1)
+    check(health.trail.interpolation == env.Enum.StatusBarInterpolation.ExponentialEaseOut and health.pulse:GetAlpha() < 0.6,
+        "Fluid motion starts easing sooner and fades the flash smoothly")
+    state.Select(env.SmallerUIPersonalMotion, 4)
+    state.units.player.power = 55
+    event("UNIT_POWER_UPDATE", "player")
+    check(power.fill:GetInterpolatedValue() == 55 and power.pulse:IsShown(),
+        "Vivid motion flashes on a meaningful power spend")
+    state.Select(env.SmallerUIPersonalMotion, 1)
+    check(not power.pulse:IsShown() and power.pendingAt == nil and power.trail:GetInterpolatedValue() == 55,
+        "Turning motion off clears pending effects immediately")
+    state.units.player.health = privateValue
+    event("UNIT_HEALTH", "player")
+    check(health.fill:GetValue() == privateValue and health.trail:GetValue() == privateValue and not health.pulse:IsShown(),
+        "Static themed bars retain native handling of restricted values")
+    local _, restored = boot(nil, env.SmallerUICharDB)
+    local style = restored.addon:GetResourceSettings().player.style
+    check(style.theme == 4 and not style.themeColours and style.barTexture == 10 and style.motion == 1 and style.trim == 1,
+        "Theme selections and individual customizations persist on reload")
+end
+
+do
+    local env, state, event, tick = boot(nil)
+    local addon = state.addon
+    local function SwingDriver()
+        for _, frame in ipairs(state.widgets) do
+            if frame.events.PLAYER_SWING then return frame end
+        end
+    end
+    addon:ShowOptions("swing")
+    check(not SwingDriver() and not addon:GetSwingTimerFrame(), "Disabled swing tracking registers no events or HUD")
+    state.Click(env.SmallerUISwingEnabled)
+    local timer, driver = addon:GetSwingTimerFrame(), SwingDriver()
+    check(driver and not timer:IsShown() and not driver.scripts.OnUpdate, "An idle enabled timer waits for native swings")
+    event("PLAYER_SWING", 2, 1)
+    check(not timer:IsShown(), "Off-hand events do not start the main-hand lane")
+    event("PLAYER_SWING", 2, 0)
+    tick(0.5)
+    check(timer:IsShown() and timer.bar.dot:IsShown() and not timer.mouseEnabled,
+        "A main-hand swing shows a click-through line and dot")
+    near(timer.bar:GetValue(), 0.25, "Progress is measured against the native interval")
+    event("PLAYER_SWING", 1.5, 0)
+    tick(0.75)
+    near(timer.bar:GetValue(), 0.5, "A new swing immediately replaces the previous deadline")
+    state.Select(env.SmallerUISwingshape, 2)
+    state.Select(env.SmallerUISwingtheme, 2)
+    state.Select(env.SmallerUISwingtexture, 3)
+    check(not timer.bar.dot:IsShown() and timer.bar:GetStatusBarTexture().textureValue == addon.resourceTextures[3][3]
+        and timer.bar.barColor[3] == 1, "The filled style applies the chosen theme and texture during a live swing")
+    near(timer.bar:GetValue(), 0.5, "Styling a swing does not restart its clock")
+    tick(1)
+    check(not timer:IsShown() and not driver.scripts.OnUpdate, "The timer hides and stops updating after the native deadline")
+    state.Select(env.SmallerUISwingweapon, 3)
+    event("PLAYER_SWING", 2, 0)
+    event("PLAYER_SWING", privateValue, 2)
+    check(not timer:IsShown(), "The ranged lane ignores other attacks and unreadable timing")
+    event("PLAYER_SWING", 2.4, 2)
+    tick(1.2)
+    near(timer.bar:GetValue(), 0.5, "Ranged auto attacks use their own native interval")
+    event("WEAPON_SLOT_CHANGED")
+    check(not timer:IsShown() and not driver.scripts.OnUpdate, "Changing weapons clears a stale swing")
+    state.Click(env.SmallerUISwingEnabled)
+    check(not SwingDriver(), "Disabling the timer unregisters its native event")
+    state.geometry = true
+    state.Click(env.SmallerUISwingMove)
+    check(timer:IsShown() and timer.mouseEnabled and not driver.scripts.OnUpdate,
+        "Move Mode previews a disabled timer without starting its clock")
+    local cfg = addon:GetResourceSettings().swing
+    local oldX = cfg.x
+    state.shift, state.mouseDown = true, true
+    timer.scripts.OnDragStart(timer)
+    state.cursorX = 140
+    tick()
+    timer.scripts.OnDragStop(timer)
+    near(cfg.x, oldX + 40, "The swing timer uses the shared drag position")
+    addon:FinishResourceEdit(false)
+    check(addon:GetResourceSettings().swing.x == oldX and not timer:IsShown()
+        and state.currentCategory == addon.swingSettingsCategory, "Cancel restores the timer position and returns to its settings")
+    local noSwingEnv = boot(nil, nil, { noEventMetadata = true })
+    check(noSwingEnv.SmallerUISwingEnabled.enabled == false, "Unavailable swing events leave the feature disabled")
 end
 
 print(string.format("Passed %d checks (%s).", passed, _VERSION))

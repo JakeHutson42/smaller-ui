@@ -65,9 +65,9 @@ def point(obj):
 
 
 def render(env, state, key, filename, content_offset=0, texture_menu=False):
-    page = {"scaling": env.SmallerUIOptions, "cooldowns": env.SmallerUIReadyPage,
+    page = {"scaling": env.SmallerUIOptions,
             "resources": env.SmallerUIPersonalOptions, "party": env.SmallerUIPartyOptions,
-            "pet": env.SmallerUIPetOptions}[key]
+            "pet": env.SmallerUIPetOptions, "swing": env.SmallerUISwingOptions}[key]
     extra_height = {"resources": 228, "party": 258, "pet": 210}.get(key, 0)
     page_id, content_id = page.uid, page.content.uid
     coordinates = {page_id: (0, 0), page.content.uid: (16, 90 - content_offset), page.scroll.uid: (16, 90)}
@@ -156,6 +156,20 @@ def render(env, state, key, filename, content_offset=0, texture_menu=False):
         elif obj.kind == "Button" and width:
             button(draw, x, y, width, height, obj.text, obj.enabled is not False)
 
+    if key == "swing":
+        preview = env.SmallerUISwingPreview
+        x, y = position(preview)
+        y += float(preview.height) / 2
+        width, thickness = float(preview.width), float(preview.bar.height)
+        fill = width * float(preview.bar.value)
+        rgb = tuple(round(preview.bar.barColor[index] * 255) for index in (1, 2, 3))
+        box(draw, (x, y - thickness / 2, x + width, y + thickness / 2), "#353b47")
+        box(draw, (x, y - thickness / 2, x + fill, y + thickness / 2), rgb)
+        if preview.bar.dot.IsShown(preview.bar.dot):
+            radius = float(preview.bar.dot.width) / 2
+            draw.ellipse(tuple(round(value * SCALE) for value in
+                (x + fill - radius, y - radius, x + fill + radius, y + radius)), fill=rgb)
+
     if texture_menu:
         dropdown = env.SmallerUIPersonalBarTexture
         dropdown.GenerateMenu(dropdown)
@@ -194,9 +208,9 @@ def render(env, state, key, filename, content_offset=0, texture_menu=False):
     box(outer, (42, 154, 248, 706 + extra_height), "#121110", "#514837", 3)
     box(outer, (54, 170, 236, 198), "#0b0b0a", "#574c37", 3)
     text(outer, (64, 176), "Search", 12, "#807b71")
-    for index, (category_key, label) in enumerate((("group", "Smaller UI"), ("scaling", "UI scaling"),
-            ("resources", "Personal resources"), ("party", "Party display"),
-            ("pet", "Pet display"), ("cooldowns", "Cooldown flashes"))):
+    for index, (category_key, label) in enumerate((("group", state.addon.displayName), ("scaling", "UI scaling"),
+            ("resources", "Personal bars"), ("party", "Party bars"),
+            ("pet", "Pet bars"), ("swing", "Swing timer"))):
         y = 214 + index * 36
         if key == category_key:
             box(outer, (50, y, 240, y + 32), "#4b3d27", None, 2)
@@ -220,7 +234,7 @@ def render_hud(state, filename, moving=False):
     addon = state.addon
     hud = addon.GetResourceDisplay(addon)
     cfg = addon.GetResourceSettings(addon)
-    text(draw, (40, 28), "Move mode" if moving else "Personal resources", 23, GOLD, True)
+    text(draw, (40, 28), "Move mode" if moving else "Personal bars", 23, GOLD, True)
     if not moving:
         text(draw, (40, 63), "Movable health and power bars, with optional party and pet displays.", 14, MUTED)
 
@@ -354,14 +368,11 @@ lua.globals().addon_sources = lua.table_from([
     for line in manifest.splitlines() if line.strip().endswith(".lua")
 ])
 boot = lua.execute((ROOT / "tests" / "smaller_ui_test.lua").read_text())
-preferences = lua.table_from({"scale": 0.4, "enabled": True, "readyFlash": True,
+preferences = lua.table_from({"scale": 0.4, "enabled": True,
                               "elements": lua.table_from({"chat": 1, "actionbars": 0.85})})
-character = lua.table_from({"readySlots": lua.table_from({"ActionButton1": True, "MultiBarBottomLeftButton2": True})})
-env, state, send_event, tick, _ = boot(preferences, character)
+env, state, send_event, tick, _ = boot(preferences)
 state.addon.ShowOptions(state.addon, "scaling")
 render(env, state, "scaling", "ui-scale-preview.png")
-state.addon.ShowOptions(state.addon, "cooldowns")
-render(env, state, "cooldowns", "cooldown-flashes-preview.png")
 state.addon.ShowOptions(state.addon, "resources")
 render(env, state, "resources", "personal-resources-settings-preview.png")
 render(env, state, "resources", "health-previews-settings-preview.png", content_offset=904)
@@ -379,6 +390,9 @@ state.addon.ShowOptions(state.addon, "party")
 render(env, state, "party", "party-display-settings-preview.png")
 state.addon.ShowOptions(state.addon, "pet")
 render(env, state, "pet", "pet-display-settings-preview.png")
+state.addon.ShowOptions(state.addon, "swing")
+render(env, state, "swing", "swing-timer-settings-preview.png")
+state.addon.ShowOptions(state.addon, "resources")
 cfg = state.addon.GetResourceSettings(state.addon)
 cfg.enabled, cfg.partyEnabled, cfg.petEnabled = True, True, True
 cfg.player.scale, cfg.player.x, cfg.player.y = 1.25, 210, -55

@@ -121,6 +121,7 @@ local function Candidates()
     Add(display.partyRoot, "party")
     for _, view in ipairs(display.party) do View(view) end
     Add(display.player.seal, "player", "seal")
+    Add(Addon:GetSwingTimerFrame(), "swing", "swing")
     return result
 end
 local function ClampOrigin(value, size, low, high)
@@ -172,7 +173,9 @@ function Addon:UpdateResourceMoveMode()
     if drag and not drag.finishing then
         if IsMouseButtonDown("LeftButton") then drag.sawHeld = true
         elseif drag.sawHeld then
-            if drag.scope == "seal" then self:EndSealDrag() else self:EndResourceDrag() end
+            if drag.scope == "seal" then self:EndSealDrag()
+            elseif drag.scope == "swing" then self:EndSwingTimerDrag()
+            else self:EndResourceDrag() end
             return
         end
     end

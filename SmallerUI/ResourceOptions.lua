@@ -2,15 +2,15 @@ local _, Addon = ...
 local pages = {}
 local activePicker
 local definitions = {
-    player = { key = "resources", prefix = "SmallerUIPersonal", title = "Personal resources", enabled = "enabled",
+    player = { key = "resources", prefix = "SmallerUIPersonal", title = "Personal bars", enabled = "enabled",
         subtitle = "Health and power bars, exactly where you want them.",
         tip = "Show your health and current primary resource. Each character keeps their own layout.",
         status = "Live health and power updates. Layout saves for this character." },
-    party = { key = "party", prefix = "SmallerUIParty", title = "Party display", enabled = "partyEnabled",
+    party = { key = "party", prefix = "SmallerUIParty", title = "Party bars", enabled = "partyEnabled",
         subtitle = "A compact health and power display for your party.",
         tip = "Show up to four party members. These visual bars leave your normal party controls available.",
         status = "Enabled. Party members appear when you are in a group." },
-    pet = { key = "pet", prefix = "SmallerUIPet", title = "Pet display", enabled = "petEnabled",
+    pet = { key = "pet", prefix = "SmallerUIPet", title = "Pet bars", enabled = "petEnabled",
         subtitle = "Your pet's health and power, with a layout of its own.",
         tip = "Show your active pet's health and current power. Automatically hides when no pet is present.",
         status = "Enabled. Bars appear while you have an active pet." },
@@ -38,7 +38,7 @@ function Addon:OpenResourceColourPicker(scope, kind, token)
         ColorPickerFrame:Hide()
     end
     local colours = self:GetResourceSettings()[scope].colours
-    local styleColour = kind == "textColour" or kind == "borderColour"
+    local styleColour = self.resourceStyleColours[kind]
     local original
     if token then original = colours.powerOverrides[token]
     elseif styleColour then original = self:GetResourceSettings()[scope].style[kind]
@@ -81,6 +81,13 @@ function Addon:RefreshResourceOptions(syncInput)
         local enabled = cfg[definition.enabled]
         page.enabled:SetChecked(enabled)
         page.linked:SetChecked(settings.linked)
+        if page.layout then
+            page.horizontalLayout:SetShown(not settings.curved)
+            page.arcLayout:SetShown(settings.curved)
+            page.moveNote:SetText(settings.curved and "Drag either arc to move the pair. Hold Shift to ignore snapping. Escape cancels."
+                or "Drag to move. Hold Shift to ignore snapping. Escape cancels. Corners resize.")
+            if page:IsShown() then page.layout:GenerateMenu() end
+        end
         page.values:SetChecked(settings.values)
         page.powerByType:SetChecked(settings.colours.powerByType)
         page.healthColour.swatch:SetColorTexture(self:GetResourceColour(scope, "health"))
@@ -116,6 +123,7 @@ function Addon:RefreshResourceOptions(syncInput)
                 healthWidth = settings.health.width, healthHeight = settings.health.height,
                 powerWidth = settings.power.width, powerHeight = settings.power.height }
             for key, input in pairs(page.inputs) do input:SetText(string.format("%.2f", values[key])) end
+            for key, input in pairs(page.arcInputs or {}) do input:SetText(string.format("%.2f", settings.arc[key])) end
             if page.sealInputs then
                 for key, input in pairs(page.sealInputs) do input:SetText(string.format("%.2f", cfg.seal[key])) end
             end
@@ -137,12 +145,12 @@ function Addon:BuildResourceOptions()
         pages[scope], page.inputs = page, {}
         local content = page.content
         local function Notice(text, error) Addon:OptionsFeedback(text, error, key) end
-        local function Checkbox(name, label, x, y, settingScope, setting, tip)
-            return UI.Checkbox(content, prefix .. name, label, x, y, function(enabled)
+        local function Checkbox(name, label, x, y, settingScope, setting, tip, parent)
+            return UI.Checkbox(parent or content, prefix .. name, label, x, y, function(enabled)
                 Addon:SetResourceOption(settingScope, setting, enabled)
             end, tip)
         end
-        local enableLabel = player and "Enable personal resource display" or scope == "pet" and "Enable pet display" or "Enable party display"
+        local enableLabel = player and "Show personal bars" or scope == "pet" and "Show pet bars" or "Show party bars"
         page.enabled = Checkbox("Enabled", enableLabel, 4, 0, "root", definition.enabled, definition.tip)
         if player then
             page.hideBlizzard = Checkbox("HideBlizzard", "Hide Blizzard's personal bar", 320, 0, "root", "hideBlizzard",
@@ -155,37 +163,59 @@ function Addon:BuildResourceOptions()
             Addon:RefreshResourceOptions(true)
             Notice("Default layout restored.")
         end)
-        UI.Label(content, "Drag to move. Hold Shift to ignore snapping. Escape cancels. Corners resize.", 12, -126, "GameFontDisableSmall", 580)
+        page.moveNote = UI.Label(content, "Drag to move. Hold Shift to ignore snapping. Escape cancels. Corners resize.",
+            12, -126, "GameFontDisableSmall", 580)
+        local horizontal = content
+        if player then
+            page.layout = UI.Select(content, prefix .. "Layout", 356, -90, 212, { { 1, "Horizontal bars" }, { 2, "Curved HUD" } },
+                function() return Addon:GetResourceSettings().player.curved and 2 or 1 end,
+                function(value)
+                    Addon:SetResourceOption("player", "curved", value == 2)
+                    Addon:RefreshResourceOptions(true)
+                end)
+            UI.Tooltip(page.layout, "Choose stacked horizontal bars or put health and power on either side of the screen centre.")
+            horizontal = CreateFrame("Frame", nil, content)
+            horizontal:SetPoint("TOPLEFT", 0, 0)
+            horizontal:SetSize(620, 390)
+            page.horizontalLayout = horizontal
+            page.arcLayout = CreateFrame("Frame", nil, content)
+            page.arcLayout:SetPoint("TOPLEFT", 0, 0)
+            page.arcLayout:SetSize(620, 390)
+            page.arcLayout:Hide()
+            page.arcInputs = {}
+        end
         page.linked = Checkbox("Linked", "Move and resize bars together", 4, -160, scope, "linked",
-            "In edit mode, dragging moves the whole group and corner resizing changes both bars proportionally. Uncheck to move and resize each bar separately. Exact sizes below can always be entered individually.")
-        local function Apply()
+            "In edit mode, dragging moves the whole group and corner resizing changes both bars proportionally. Uncheck to move and resize each bar separately. Exact sizes below can always be entered individually.", horizontal)
+        local function Apply(arc)
+            local inputs = arc and page.arcInputs or page.inputs
             local values = {}
-            for field, input in pairs(page.inputs) do values[field] = tonumber(input:GetText()) end
-            -- Invalid entries must remain present in validation rather than
-            -- disappearing from the table when tonumber returns nil.
-            for field in pairs(page.inputs) do
-                if values[field] == nil then Notice("Enter a valid number in every size field.", true); return end
+            for field, input in pairs(inputs) do
+                values[field] = tonumber(input:GetText())
+                if not values[field] then Notice("Enter a valid number in every size field.", true); return end
             end
-            if not Addon:SetResourceDimensions(scope, values) then
-                Notice("Width: 8-8192. Height: 2-1024. Scale: 0.10-5.00. Spacing: 0-200.", true)
+            if not Addon:SetResourceDimensions(arc and "arc" or scope, values) then
+                Notice(arc and "Arc width 20–120, height 80–640, separation 80–1000, scale 0.25–3."
+                    or "Width: 8-8192. Height: 2-1024. Scale: 0.10-5.00. Spacing: 0-200.", true)
                 return
             end
-            for _, input in pairs(page.inputs) do input:ClearFocus() end
+            for _, input in pairs(inputs) do input:ClearFocus() end
             Addon:RefreshResourceOptions(true)
             Notice("Bar sizes saved.")
         end
-        local function Input(field, x, y)
-            local input = CreateFrame("EditBox", prefix .. field, content, "InputBoxTemplate")
+        local function Input(field, x, y, arc)
+            local input = CreateFrame("EditBox", prefix .. (arc and "Arc" or "") .. field, arc and page.arcLayout or horizontal, "InputBoxTemplate")
             input:SetSize(80, 24)
             input:SetPoint("TOPLEFT", x, y)
             input:SetAutoFocus(false)
             input:SetMaxLetters(12)
             input:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-            input:SetScript("OnEnterPressed", Apply)
+            input:SetScript("OnEnterPressed", function() Apply(arc) end)
             local minimum = field == "scale" and 0.1 or field:find("Width") and 8 or field:find("Height") and 2 or 0
             local maximum = field == "scale" and 5 or field:find("Width") and 8192 or field:find("Height") and 1024 or 200
+            if arc then minimum, maximum = unpack(Addon.resourceArcLimits[field]) end
             local function Current()
                 local settings = Addon:GetResourceSettings()[scope]
+                if arc then return settings.arc[field] end
                 if field == "healthWidth" then return settings.health.width end
                 if field == "healthHeight" then return settings.health.height end
                 if field == "powerWidth" then return settings.power.width end
@@ -193,26 +223,39 @@ function Addon:BuildResourceOptions()
                 return settings[field]
             end
             UI.NumberArrows(input, field == "scale" and 0.01 or 1, minimum, maximum, Current, function(value)
-                if not Addon:SetResourceDimensions(scope, { [field] = value }) then return false end
+                if not Addon:SetResourceDimensions(arc and "arc" or scope, { [field] = value }) then return false end
                 Notice("Bar size saved.")
             end)
-            page.inputs[field] = input
+            local inputs = arc and page.arcInputs or page.inputs
+            inputs[field] = input
         end
-        UI.Label(content, "Scale", 12, -212)
+        UI.Label(horizontal, "Scale", 12, -212)
         Input("scale", 148, -206)
-        UI.Label(content, "Bar gap", 312, -212)
+        UI.Label(horizontal, "Bar gap", 312, -212)
         Input("gap", 444, -206)
-        UI.Label(content, "Bar", 12, -256, "GameFontNormalSmall")
-        UI.Label(content, "Width", 148, -256, "GameFontNormalSmall")
-        UI.Label(content, "Height", 308, -256, "GameFontNormalSmall")
-        UI.Label(content, "Health", 12, -286)
-        UI.Label(content, "Power", 12, -324)
+        UI.Label(horizontal, "Bar", 12, -256, "GameFontNormalSmall")
+        UI.Label(horizontal, "Width", 148, -256, "GameFontNormalSmall")
+        UI.Label(horizontal, "Height", 308, -256, "GameFontNormalSmall")
+        UI.Label(horizontal, "Health", 12, -286)
+        UI.Label(horizontal, "Power", 12, -324)
         Input("healthWidth", 148, -280)
         Input("healthHeight", 308, -280)
         Input("powerWidth", 148, -318)
         Input("powerHeight", 308, -318)
-        UI.Button(content, prefix .. "Apply", "Apply sizes", 432, -318, 132, Apply)
-        UI.Label(content, "Use Scale for the whole group, or enter each bar's exact dimensions.", 12, -358, "GameFontDisableSmall", 580)
+        UI.Button(horizontal, prefix .. "Apply", "Apply sizes", 432, -318, 132, function() Apply(false) end)
+        UI.Label(horizontal, "Use Scale for the whole group, or enter each bar's exact dimensions.", 12, -358, "GameFontDisableSmall", 580)
+        if player then
+            UI.Label(page.arcLayout, "Health on the left. Your active resource on the right.", 12, -171, "GameFontHighlight")
+            UI.Label(page.arcLayout, "Arc scale", 12, -212)
+            Input("scale", 148, -206, true)
+            UI.Label(page.arcLayout, "Separation", 312, -212)
+            Input("gap", 444, -206, true)
+            UI.Label(page.arcLayout, "Arc width", 12, -258)
+            Input("width", 148, -252, true)
+            UI.Label(page.arcLayout, "Arc height", 312, -258)
+            Input("height", 444, -252, true)
+            UI.Button(page.arcLayout, prefix .. "ArcApply", "Apply arc sizes", 432, -318, 132, function() Apply(true) end)
+        end
         local appearance = -412
         if scope == "party" then
             UI.Label(content, "Member spacing", 12, -402)
@@ -266,7 +309,7 @@ function Addon:BuildResourceOptions()
         end
         page.healthColour = ColourButton("health", "Health colour", 12)
         page.powerColour = ColourButton("power", "Power colour", 208)
-        UI.Button(content, prefix .. "ResetColours", "Restore defaults", 408, appearance - 112, 164, function()
+        UI.Button(content, prefix .. "ResetColours", "Reset colours", 408, appearance - 112, 164, function()
             Addon:CancelResourceColourPicker(scope)
             Addon:ResetResourceColours(scope)
             Notice("Default colours restored: red health and power-type colours.")
@@ -334,6 +377,7 @@ function Addon:BuildResourceOptions()
         page:SetScript("OnHide", function()
             Addon:CancelResourceColourPicker(scope)
             for _, input in pairs(page.inputs) do input:ClearFocus() end
+            for _, input in pairs(page.arcInputs or {}) do input:ClearFocus() end
             for _, input in pairs(page.sealInputs or {}) do input:ClearFocus() end
         end)
         return page

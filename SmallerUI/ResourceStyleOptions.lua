@@ -3,7 +3,35 @@ local formats = { { 0, "Hidden" }, { 1, "Current" }, { 2, "Current / maximum" },
     { 3, "Percentage" }, { 4, "Current + percentage" }, { 5, "Current / max + %" } }
 local fonts = { { 1, "Game default" }, { 2, "Arial" }, { 3, "Skurri" } }
 local alignments = { { 1, "Left" }, { 2, "Centre" }, { 3, "Right" } }
-local advancedTop = -124
+local advancedTop = -236
+local WHITE = "Interface\\Buttons\\WHITE8X8"
+
+local function PreviewBar(parent, y, height, value)
+    local bar = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+    bar:SetSize(218, height)
+    bar:SetPoint("TOPLEFT", 374, y)
+    if bar.SetRoundLayoutToNearestPixel then bar:SetRoundLayoutToNearestPixel(true) end
+    bar.fill = CreateFrame("StatusBar", nil, bar)
+    bar.fill:SetStatusBarTexture(WHITE)
+    bar.fill:SetMinMaxValues(0, 100)
+    bar.fill:SetValue(value)
+    bar.trimLayer = bar.fill
+    return bar
+end
+
+local function RefreshPreview(bar, style, r, g, b)
+    local pixel = (PixelUtil and PixelUtil.GetPixelToUIUnitFactor() or 1) / bar:GetEffectiveScale()
+    if pixel ~= bar.pixel then
+        bar.pixel = pixel
+        bar:SetBackdrop({ bgFile = WHITE, edgeFile = WHITE, edgeSize = pixel })
+    end
+    local inset = style.border and pixel or 0
+    bar.fill:ClearAllPoints()
+    bar.fill:SetPoint("TOPLEFT", inset, -inset)
+    bar.fill:SetPoint("BOTTOMRIGHT", -inset, inset)
+    bar.fill:SetStatusBarColor(r, g, b)
+    Addon:StyleResourceSurface(bar, style, false)
+end
 
 function Addon:BuildResourceStyleOptions(page, scope, prefix, content, appearance)
     local UI = self.OptionsUI
@@ -45,12 +73,27 @@ function Addon:BuildResourceStyleOptions(page, scope, prefix, content, appearanc
         button.swatch:SetPoint("TOPLEFT", 156, -5)
         return button
     end
-    page.border = UI.Checkbox(host, prefix .. "Border", "Show bar borders", 4, 0,
+    UI.Label(host, "Theme preset", 12, -6)
+    local theme = UI.Select(host, prefix .. "Theme", 126, 0, 208, Addon.resourceThemes,
+        function() return Settings().theme end,
+        function(value)
+            Addon:CancelResourceColourPicker(scope)
+            Addon:ApplyResourceTheme(scope, value)
+        end)
+    dropdowns[#dropdowns + 1] = theme
+    UI.Tooltip(theme, "Apply a texture, trim and palette to these bars. You can adjust each setting below.")
+    local healthPreview = PreviewBar(host, -4, 17, 78)
+    local powerPreview = PreviewBar(host, -26, 10, 61)
+    page.themeColours = UI.Checkbox(host, prefix .. "ThemeColours", "Apply preset colours", 4, -40,
+        function(enabled) Addon:SetResourceStyle(scope, "themeColours", enabled) end,
+        "When enabled, applying a preset replaces the bar, border, background and accent colours. Turn it off to keep your palette.")
+    page.border = UI.Checkbox(host, prefix .. "Border", "Show bar borders", 4, -78,
         function(enabled) Addon:SetResourceStyle(scope, "border", enabled) end,
         "Hide the border around your bars. Edit mode still shows a temporary guide.")
-    page.borderColour = ColourButton(host, "BorderColour", "Border colour", 208, 0, "borderColour")
-    UI.Label(host, "Bar texture", 12, -48)
-    page.texture = UI.Select(host, prefix .. "BarTexture", 148, -42, 164, Addon.resourceTextures,
+    page.borderColour = ColourButton(host, "BorderColour", "Border colour", 208, -78, "borderColour")
+    page.trackColour = ColourButton(host, "TrackColour", "Background colour", 414, -78, "trackColour")
+    UI.Label(host, "Bar texture", 12, -122)
+    page.texture = UI.Select(host, prefix .. "BarTexture", 126, -116, 208, Addon.resourceTextures,
         function() return Settings().barTexture end,
         function(value) Addon:SetResourceStyle(scope, "barTexture", value) end,
         function(button, entry)
@@ -62,16 +105,26 @@ function Addon:BuildResourceStyleOptions(page, scope, prefix, content, appearanc
             return 252, 22
         end)
     dropdowns[#dropdowns + 1] = page.texture
-    local texturePreview = host:CreateTexture(nil, "ARTWORK")
-    texturePreview:SetPoint("TOPLEFT", 328, -49)
-    texturePreview:SetSize(112, 12)
+    UI.Label(host, "Trim", 350, -122)
+    local trim = UI.Select(host, prefix .. "Trim", 414, -116, 180, Addon.resourceTrims,
+        function() return Settings().trim end,
+        function(value) Addon:SetResourceStyle(scope, "trim", value) end)
+    dropdowns[#dropdowns + 1] = trim
+    UI.Tooltip(trim, "Choose the decoration on the bar border. Jewels scale down on thin bars.")
+    UI.Label(host, "Motion", 12, -160)
+    local motion = UI.Select(host, prefix .. "Motion", 126, -154, 208, Addon.resourceMotion,
+        function() return Settings().motion end,
+        function(value) Addon:SetResourceStyle(scope, "motion", value) end)
+    dropdowns[#dropdowns + 1] = motion
+    UI.Tooltip(motion, "Choose Off for static bars, Subtle for a short flash, Fluid for softer trails, or Vivid for stronger feedback on damage, healing and power spent. Live values update immediately.")
+    page.accentColour = ColourButton(host, "AccentColour", "Accent colour", 414, -154, "accentColour")
     local textToggle, resourceToggle
-    textToggle = UI.Button(host, prefix .. "TextToggle", "Text settings...", 12, -84, 180, function()
+    textToggle = UI.Button(host, prefix .. "TextToggle", "Text settings...", 12, -196, 180, function()
         text:SetShown(not text:IsShown())
         textToggle:SetText(text:IsShown() and "Hide text settings" or "Text settings...")
         Reflow()
     end)
-    resourceToggle = UI.Button(host, prefix .. "ResourceColoursToggle", "Resource colours...", 208, -84, 180, function()
+    resourceToggle = UI.Button(host, prefix .. "ResourceColoursToggle", "Resource colours...", 208, -196, 180, function()
         Addon:CancelResourceColourPicker(scope)
         resources:SetShown(not resources:IsShown())
         resourceToggle:SetText(resources:IsShown() and "Hide resource colours" or "Resource colours...")
@@ -130,13 +183,17 @@ function Addon:BuildResourceStyleOptions(page, scope, prefix, content, appearanc
     function page:RefreshStyling(syncInput)
         local style = Settings()
         self.border:SetChecked(style.border)
-        texturePreview:SetTexture(Addon.resourceTextures[style.barTexture][3])
-        texturePreview:SetVertexColor(Addon:GetResourceColour(scope, "health"))
+        self.themeColours:SetChecked(style.themeColours)
+        RefreshPreview(healthPreview, style, Addon:GetResourceColour(scope, "health"))
+        RefreshPreview(powerPreview, style, Addon:GetResourceColour(scope, "power"))
         self.autoFontSize:SetChecked(style.autoFontSize)
         self.shortNumbers:SetChecked(style.shortNumbers)
         local border, colour = style.borderColour, style.textColour
         self.borderColour.swatch:SetColorTexture(border.r, border.g, border.b)
         self.textColour.swatch:SetColorTexture(colour.r, colour.g, colour.b)
+        local track, accent = style.trackColour, style.accentColour
+        self.trackColour.swatch:SetColorTexture(track.r, track.g, track.b)
+        self.accentColour.swatch:SetColorTexture(accent.r, accent.g, accent.b)
         self.resourceColour.swatch:SetColorTexture(Addon:GetResourceColour(scope, "power", self.resourceToken))
         inputs.fontSize:SetEnabled(not style.autoFontSize)
         inputs.fontSize.up:SetEnabled(not style.autoFontSize)
